@@ -1,6 +1,6 @@
 # Found Footage Filter
 
-Live camera filters in the browser — VHS, glitch, Backrooms, analog horror, security cam, night vision, thermal, old film and more. Every filter has sliders. Take photos or record video with the effect baked in.
+Live camera filters in the browser — VHS, glitch, Backrooms, analog horror, psychedelic (kaleidoscope, hue cycling, wormhole), video game (Game Boy, NES, PS1, CRT arcade, comic), surveillance overlays (CCTV, body cam, drone, trail cam), virtual backgrounds, and a Mutate mode that keeps every slider drifting. Take photos or record video with the effect baked in.
 
 Works on iPhone, iPad and desktop. Nothing leaves the device.
 

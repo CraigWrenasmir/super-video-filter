@@ -28,6 +28,14 @@
   @keyframes blink{50%{opacity:0}}
   #osdFont-vhs .osd{font-family:"Courier New",Courier,monospace;font-weight:bold;color:#fff}
   #osdFont-cam .osd{font-family:var(--mono);color:#dfe}
+  .brk{position:absolute;width:28px;height:28px;border:2px solid rgba(255,255,255,.7)}
+  .brk.tl{top:8%;left:6%;border-right:0;border-bottom:0}.brk.tr{top:8%;right:6%;border-left:0;border-bottom:0}
+  .brk.bl{bottom:8%;left:6%;border-right:0;border-top:0}.brk.br{bottom:8%;right:6%;border-left:0;border-top:0}
+  .cross{position:absolute;left:50%;top:50%;width:60px;height:60px;transform:translate(-50%,-50%);background:
+    linear-gradient(#8f8 0 0) center/100% 1px no-repeat, linear-gradient(#8f8 0 0) center/1px 100% no-repeat;opacity:.8}
+  .hud-ring{position:absolute;left:50%;top:50%;width:140px;height:140px;border:1px solid rgba(140,255,140,.5);border-radius:50%;transform:translate(-50%,-50%)}
+  .hud-bar{position:absolute;left:50%;top:6%;transform:translateX(-50%);display:flex;gap:10px;align-items:flex-end}
+  .hud-bar i{display:block;width:1px;background:rgba(140,255,140,.7)}
   #splash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#000;text-align:center;padding:24px;z-index:5}
   #splash h1{font-size:clamp(22px,6vw,44px);margin:0;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-shadow:3px 0 var(--rec),-3px 0 #2df;animation:shake 3s infinite}
   @keyframes shake{0%,94%,100%{transform:none}95%{transform:translate(2px,-1px) skewX(4deg)}97%{transform:translate(-3px,1px)}}
@@ -44,11 +52,11 @@
   #bar button:active{background:#222}
   #bar button.rec{background:var(--rec);color:#fff;border-color:var(--rec)}
   #bar button.on{border-color:var(--acc);color:var(--acc)}
-  #presets{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto}
+  #presets{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
   #presets::-webkit-scrollbar{display:none}
   #bgs{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
   #bgs::-webkit-scrollbar{display:none}
-  #bgs .lbl{font-size:10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;padding-right:4px;white-space:nowrap}
+  #presets .lbl,#bgs .lbl{font-size:10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;padding-right:4px;white-space:nowrap}
   .chip.bg{border-color:#3a3a3a}.chip.bg.on{background:#2df;border-color:#2df}
   .chip.wait{opacity:.5}
   .chip{font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:8px 13px;cursor:pointer;white-space:nowrap}
@@ -94,6 +102,7 @@
     <button id="snap">Photo</button>
     <button id="record">● Rec</button>
     <button id="fs">Full</button>
+    <button id="mutate" title="Sliders keep drifting to new random settings">Mutate</button>
     <button id="hide">Hide</button>
   </div>
   <div id="presets"></div>
@@ -144,6 +153,27 @@ const PARAMS = {
   fisheye:   {label:'Fisheye',      min:0, max:1, def:0},
   edges:     {label:'Edge detect',  min:0, max:1, def:0},
   ghost:     {label:'Ghost trail',  min:0, max:1, def:0},
+  // trippy
+  hueCycle:  {label:'Hue cycle',    min:0, max:1, def:0},
+  kaleido:   {label:'Kaleidoscope', min:0, max:1, def:0},
+  swirl:     {label:'Swirl',        min:-1, max:1, def:0},
+  ripple:    {label:'Ripple',       min:0, max:1, def:0},
+  solarize:  {label:'Solarize',     min:0, max:1, def:0},
+  rainbow:   {label:'Rainbow trail',min:0, max:1, def:0},
+  mirror:    {label:'Mirror',       min:0, max:1, def:0},
+  chromaWave:{label:'Colour waves', min:0, max:1, def:0},
+  strobe:    {label:'Strobe',       min:0, max:1, def:0},
+  tunnel:    {label:'Tunnel zoom',  min:0, max:1, def:0},
+  // video game
+  gameboy:   {label:'Game Boy',     min:0, max:1, def:0},
+  nes:       {label:'NES palette',  min:0, max:1, def:0},
+  psx:       {label:'PS1 jitter',   min:0, max:1, def:0},
+  crt:       {label:'CRT screen',   min:0, max:1, def:0},
+  halftone:  {label:'Halftone dots',min:0, max:1, def:0},
+  outline:   {label:'Cel outline',  min:0, max:1, def:0},
+  // surveillance
+  irGlow:    {label:'IR glow',      min:0, max:1, def:0},
+  motionBox: {label:'Motion boxes', min:0, max:1, def:0},
 };
 
 const PRESETS = [
@@ -182,6 +212,67 @@ const PRESETS = [
   {id:'lowfi', name:'8-bit', osd:'none',
    sliders:['pixelate','posterize','saturation','contrast','scanlines','grain'],
    v:{pixelate:.5,posterize:.7,saturation:1.3,contrast:1.15,scanlines:.2}},
+  // ---- trippy ----
+  {id:'acid', name:'Acid', osd:'none', group:'trippy',
+   sliders:['hueCycle','swirl','rainbow','chromaWave','saturation','ripple','contrast'],
+   v:{hueCycle:.5,swirl:.35,rainbow:.55,chromaWave:.4,saturation:1.6,ripple:.15,contrast:1.15,vignette:.2}},
+  {id:'kaleido', name:'Kaleidoscope', osd:'none', group:'trippy',
+   sliders:['kaleido','hueCycle','swirl','mirror','saturation','ripple','tunnel'],
+   v:{kaleido:.6,hueCycle:.25,swirl:.15,saturation:1.4,vignette:.25}},
+  {id:'solar', name:'Solar Flare', osd:'none', group:'trippy',
+   sliders:['solarize','posterize','rgbSplit','hueCycle','contrast','grain','strobe'],
+   v:{solarize:.9,posterize:.4,rgbSplit:.3,hueCycle:.15,contrast:1.3,grain:.2,vignette:.3}},
+  {id:'dream', name:'Dream Ripple', osd:'none', group:'trippy',
+   sliders:['ripple','ghost','chromaWave','blur','saturation','tunnel','warp'],
+   v:{ripple:.6,ghost:.7,chromaWave:.5,blur:.3,saturation:1.3,warp:.1,vignette:.3}},
+  {id:'tunnel', name:'Wormhole', osd:'none', group:'trippy',
+   sliders:['tunnel','rainbow','swirl','hueCycle','kaleido','strobe','contrast'],
+   v:{tunnel:.8,rainbow:.6,swirl:.5,hueCycle:.35,contrast:1.2,vignette:.3}},
+  {id:'rave', name:'Rave', osd:'none', group:'trippy',
+   sliders:['strobe','hueCycle','invertFlash','rgbSplit','posterize','saturation','mirror'],
+   v:{strobe:.5,hueCycle:.8,invertFlash:.1,rgbSplit:.4,posterize:.5,saturation:1.8,mirror:.3,vignette:.2}},
+  // ---- video game ----
+  {id:'gameboy', name:'Game Boy', osd:'none', group:'game',
+   sliders:['gameboy','pixelate','contrast','brightness','scanlines'],
+   v:{gameboy:1,pixelate:.35,contrast:1.2,brightness:1.05,vignette:0,grain:0}},
+  {id:'nes', name:'NES', osd:'none', group:'game',
+   sliders:['nes','pixelate','crt','saturation','contrast','outline'],
+   v:{nes:1,pixelate:.3,crt:.5,saturation:1.3,contrast:1.15,vignette:0,grain:0}},
+  {id:'psx', name:'PS1', osd:'none', group:'game',
+   sliders:['psx','lowres','posterize','blur','contrast','grain','crt'],
+   v:{psx:.8,lowres:.5,posterize:.35,contrast:1.1,vignette:.3,grain:.1}},
+  {id:'arcade', name:'CRT Arcade', osd:'none', group:'game',
+   sliders:['crt','scanlines','bleed','saturation','contrast','brightness','blur'],
+   v:{crt:1,scanlines:.5,bleed:.4,saturation:1.4,contrast:1.2,brightness:1.1,blur:.2,vignette:.2,grain:.05}},
+  {id:'comic', name:'Comic Book', osd:'none', group:'game',
+   sliders:['halftone','outline','posterize','saturation','contrast','edges'],
+   v:{halftone:.7,outline:.8,posterize:.6,saturation:1.5,contrast:1.2,vignette:0,grain:0}},
+  {id:'cel', name:'Cel Shade', osd:'none', group:'game',
+   sliders:['outline','posterize','saturation','contrast','blur','brightness'],
+   v:{outline:1,posterize:.75,saturation:1.4,contrast:1.1,blur:.15,vignette:0,grain:0}},
+  // ---- surveillance ----
+  {id:'cctv', name:'CCTV', osd:'cctv', group:'cam',
+   sliders:['motionBox','mono','lowres','interlace','grain','contrast','fisheye','tapeNoise'],
+   v:{motionBox:1,mono:.85,lowres:.4,interlace:.35,grain:.35,contrast:1.2,fisheye:.3,vignette:.3,scanlines:.2}},
+  {id:'bodycam', name:'Body Cam', osd:'body', group:'cam',
+   sliders:['fisheye','gateWeave','grain','contrast','brightness','blur','lowres'],
+   v:{fisheye:.7,gateWeave:.6,grain:.3,contrast:1.1,brightness:1.05,lowres:.2,vignette:.4}},
+  {id:'drone', name:'Drone', osd:'drone', group:'cam',
+   sliders:['irGlow','mono','contrast','grain','lowres','blur','scanlines'],
+   v:{irGlow:.6,mono:1,contrast:1.35,grain:.25,lowres:.2,vignette:.35}},
+  {id:'ir', name:'Trail Cam', osd:'cctv', group:'cam',
+   sliders:['irGlow','mono','grain','contrast','brightness','blur','lowres'],
+   v:{irGlow:1,mono:1,grain:.5,contrast:1.3,brightness:1.3,blur:.2,lowres:.3,vignette:.5}},
+  // ---- mutating ----
+  {id:'chaos', name:'Chaos', osd:'none', group:'mutate', mutate:1,
+   sliders:['hueCycle','blocks','rgbSplit','swirl','kaleido','tear','posterize','strobe','ripple','saturation'],
+   v:{hueCycle:.3,blocks:.3,rgbSplit:.3,swirl:.2,posterize:.3,saturation:1.4,vignette:.2}},
+  {id:'drift', name:'Slow Drift', osd:'none', group:'mutate', mutate:.25,
+   sliders:['hueCycle','ghost','ripple','swirl','chromaWave','blur','saturation','warp'],
+   v:{hueCycle:.2,ghost:.5,ripple:.3,saturation:1.3,warp:.1,vignette:.3}},
+  {id:'haunted', name:'Haunted Tape', osd:'vhs', group:'mutate', mutate:.6,
+   sliders:['tapeNoise','tracking','tear','warp','invertFlash','blocks','mono','contrast','wobble','interlace'],
+   v:{tapeNoise:.5,tracking:.5,tear:.3,warp:.2,invertFlash:.1,blocks:.2,mono:.5,contrast:1.3,wobble:.4,interlace:.4,vignette:.6,grain:.4}},
 ];
 
 // ============================================================
@@ -206,9 +297,17 @@ uniform float tracking,bleed,scanlines,wobble,tapeNoise;
 uniform float blocks,rgbSplit,smear,tear,invertFlash;
 uniform float yellow,flicker,lowres,interlace;
 uniform float nightvision,thermal,sepia,scratches,gateWeave,mono,posterize,warp,fisheye,edges,ghost;
+uniform float hueCycle,kaleido,swirl,ripple,solarize,rainbow,mirror,chromaWave,strobe,tunnel,gameboy,nes,psx,crt,halftone,outline,irGlow,motionBox;
 
 float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float hash1(float x){ return fract(sin(x*12.9898)*43758.5453); }
+vec3 hueRot(vec3 c, float a){ // rotate hue in YIQ
+  const vec3 k = vec3(0.57735); float ca=cos(a), sa=sin(a);
+  return c*ca + cross(k,c)*sa + k*dot(k,c)*(1.-ca); }
+float bayer4(vec2 p){ vec2 q=floor(mod(p,4.)); float i=q.x+q.y*4.;
+  // 4x4 ordered dither via arithmetic (index -> threshold)
+  float x=q.x, y=q.y; float v = mod(x*2.+y*3.+ (x>=2.?1.:0.)*4. + (y>=2.?1.:0.)*8., 16.);
+  return (v+0.5)/16.; }
 float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y); }
 
@@ -239,6 +338,14 @@ void main(){
   float ft = floor(t*24.); // "frame" time for stepped effects
 
   // ---- geometry: fisheye, gate weave, wobble, warp, tear, blocks ----
+  if(crt>0.){ vec2 c=uv-0.5; float r2=dot(c,c); uv = 0.5 + c*(1.+crt*0.22*r2); }
+  if(mirror>0.){ float m = abs(uv.x-0.5)+0.5; uv.x = mix(uv.x, 1.-m, mirror); }
+  if(kaleido>0.){ vec2 c=uv-0.5; float ang=atan(c.y,c.x), r=length(c); float n=2.+floor(kaleido*8.); float seg=6.2831853/n;
+                  ang = mod(ang, seg); ang = abs(ang-seg*0.5); ang += t*0.2*kaleido; uv = 0.5 + vec2(cos(ang),sin(ang))*r; }
+  if(swirl!=0.){ vec2 c=uv-0.5; float r=length(c); float a=atan(c.y,c.x) + swirl*3.*(1.-smoothstep(0.,0.7,r)) + sin(t*0.7)*swirl*0.5; uv = 0.5+vec2(cos(a),sin(a))*r; }
+  if(tunnel>0.){ vec2 c=uv-0.5; float r=length(c); float z = fract(r*3. - t*0.6*tunnel); uv = mix(uv, 0.5 + normalize(c+0.0001)*z*0.5, tunnel*0.6); }
+  if(ripple>0.){ vec2 c=uv-0.5; float r=length(c); uv += normalize(c+0.0001)*sin(r*40.-t*5.)*0.012*ripple; }
+  if(psx>0.){ vec2 g = res/ (2.+psx*5.); uv = (floor(uv*g + (noise(vec2(floor(t*15.),uv.y*4.))-.5)*psx*1.5)+.5)/g; }
   if(fisheye>0.){ vec2 c=uv-0.5; float r=length(c); uv = 0.5 + c*(1.+ fisheye*1.2*r*r) / (1.+fisheye*0.35); }
   if(gateWeave>0.){ uv += vec2(noise(vec2(t*3.,1.))-.5, noise(vec2(t*2.3,7.))-.5)*0.012*gateWeave; }
   if(wobble>0.){ uv.x += sin(uv.y*40.+t*9.)*0.0025*wobble + (noise(vec2(t*15.,uv.y*3.))-.5)*0.01*wobble;
@@ -281,6 +388,9 @@ void main(){
 
   // ---- temporal: ghost / smear (uses previous output frame) ----
   if(ghost>0.) col = mix(col, samplePrev(v), ghost*0.85);
+  if(rainbow>0.){ vec3 pv = hueRot(samplePrev(v + (v-0.5)*0.01*rainbow), 0.35*rainbow); col = max(col, pv*mix(1.,0.96,1.-rainbow)); col = mix(col, pv, rainbow*0.55); }
+  if(outline>0.){ float d=1.5; vec3 a=sampleCam(uv+px*vec2(-d,0)), b=sampleCam(uv+px*vec2(d,0)), c2=sampleCam(uv+px*vec2(0,-d)), e=sampleCam(uv+px*vec2(0,d));
+                  float ed = length(a-b)+length(c2-e); col *= 1.-smoothstep(0.15,0.45,ed*2.)*outline; }
   if(smear>0.){ float keep = step(1.-smear*0.6, hash(floor(v*vec2(12.,9.))+floor(t*3.)));
                 col = mix(col, samplePrev(v + vec2(0.002,0.)*smear), keep*0.93*smear); }
 
@@ -297,10 +407,28 @@ void main(){
   if(thermal>0.){ float l = dot(col,vec3(.299,.587,.114));
                   vec3 tc = l<0.25? mix(vec3(0,0,.3),vec3(0,.3,1.),l*4.) : l<0.5? mix(vec3(0,.3,1.),vec3(0,1,.3),(l-.25)*4.) : l<0.75? mix(vec3(0,1,.3),vec3(1,1,0),(l-.5)*4.) : mix(vec3(1,1,0),vec3(1,1,1),(l-.75)*4.);
                   col = mix(col, tc, thermal); }
+  if(hueCycle>0.) col = hueRot(col, t*hueCycle*2.5);
+  if(chromaWave>0.){ float l = dot(col,vec3(.299,.587,.114)); vec3 w = 0.5+0.5*vec3(sin(l*8.+t*2.), sin(l*8.+t*2.+2.09), sin(l*8.+t*2.+4.18)); col = mix(col, w*(0.4+l), chromaWave); }
+  if(solarize>0.){ vec3 s = mix(col, 1.-col, step(0.5,col)); col = mix(col, s, solarize); }
+  if(irGlow>0.){ float l = dot(col,vec3(.299,.587,.114)); float bloom = smoothstep(0.55,1.,l); col = mix(col, vec3(l)+bloom*0.6, irGlow); col = mix(col, col*vec3(1.,1.,0.95), irGlow*0.5); }
+  if(gameboy>0.){ float l = dot(col,vec3(.299,.587,.114)); float d = (bayer4(v*res/max(1.,pixelate*40.))-.5)*0.25; float q = floor((l+d)*3.999)/3.;
+                  vec3 gb = q<0.34? mix(vec3(.06,.22,.06),vec3(.19,.38,.19),q*3.) : q<0.67? vec3(.55,.67,.06) : vec3(.61,.74,.06);
+                  col = mix(col, gb, gameboy); }
+  if(nes>0.){ float d = (bayer4(v*res/max(1.,pixelate*40.))-.5)*0.3; vec3 q = floor((col+d)*3.999)/3.; q.b = floor((col.b+d)*1.999)/1.; col = mix(col, q, nes); }
+  if(psx>0.){ float d = (bayer4(v*res/6.)-.5)/16.; col = mix(col, floor((col+d)*31.)/31., psx); }
+  if(halftone>0.){ float l = dot(col,vec3(.299,.587,.114)); float cell = mix(12.,5.,halftone); vec2 hp = v*res/cell; vec2 f = fract(hp)-.5; float r = length(f)*1.35;
+                   float dot_ = 1.-smoothstep(l-0.08, l+0.08, r); col = mix(col, mix(vec3(0.1), col*1.2, dot_), halftone*0.8); }
   if(posterize>0.){ float lv = mix(64., 3., posterize); col = mix(col, floor(col*lv+.5)/lv, min(1.,posterize*4.)); }
 
   // ---- overlays ----
   if(scanlines>0.){ float s = sin(v.y*res.y*3.14159)*.5+.5; col *= 1.-scanlines*0.35*s; }
+  if(crt>0.){ float ph = mod(floor(v.x*res.x), 3.); vec3 m = vec3(ph<1.?1.:0.55, ph<2.&&ph>=1.?1.:0.55, ph>=2.?1.:0.55); col *= mix(vec3(1.), m*1.15, crt*0.6);
+              vec2 c = abs(uv-0.5)*2.; float edge = smoothstep(1.0,0.96,max(c.x,c.y)); col *= mix(1., edge, crt);
+              col *= 1.-crt*0.15*step(0.5,fract(v.y*res.y*0.5 + t*30.)); }
+  if(motionBox>0.){ vec2 bc = vec2(0.3+0.4*hash1(floor(t*0.7)), 0.35+0.3*hash1(floor(t*0.7)+3.)); vec2 bs = vec2(0.12+0.15*hash1(floor(t*0.7)+7.), 0.2+0.2*hash1(floor(t*0.7)+9.));
+                    vec2 dd = abs(v-bc)-bs; float inside = step(max(dd.x,dd.y),0.); float border = inside*(1.-step(max(dd.x,dd.y),-0.004)); float on = step(0.3, hash1(floor(t*0.7)+5.));
+                    col = mix(col, vec3(0.2,1.,0.3), border*on*motionBox); }
+  if(strobe>0.){ float on = step(1.-strobe*0.5, hash1(floor(t*12.))); col = mix(col, 1.-col*0.2, on*strobe); }
   if(interlace>0.){ float line = mod(floor(v.y*res.y), 2.); float offs = (line<1.)?0.:1.;
                     vec3 other = sampleCam(uv+vec2(0.004*interlace*(hash1(ft)-.5)*4., 0.));
                     col = mix(col, mix(col,other,offs), interlace*0.6); col *= 1.-interlace*0.18*line; }
@@ -381,7 +509,7 @@ function frame(){
   gl.bindFramebuffer(gl.FRAMEBUFFER,fbA.f); gl.viewport(0,0,canvas.width,canvas.height); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,canvas.width,canvas.height); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
   [fbA,fbB]=[fbB,fbA];
-  drawOSD(t);
+  drawOSD(t); tickMutate(t);
 }
 
 // ---------- on-screen text ----------
@@ -393,9 +521,25 @@ function drawOSD(t){
   const time=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   const date=`${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
   const rec = recorder ? '<span class="dot"></span>REC' : (osdMode==='vhs'?'▶ PLAY':'');
-  const lbl = stamp || (osdMode==='vhs'?'SP':'CAM 01');
-  overlay.id = 'osdFont-'+osdMode;
-  overlay.innerHTML = `<div class="osd tl">${rec}</div><div class="osd tr">${lbl}</div><div class="osd bl">${date}</div><div class="osd br">${time}</div>`;
+  overlay.id = 'osdFont-'+(osdMode==='vhs'?'vhs':'cam');
+  const tick=Math.floor(t);
+  let html='';
+  if(osdMode==='vhs'||osdMode==='cam'){
+    const lbl = stamp || (osdMode==='vhs'?'SP':'CAM 01');
+    html = `<div class="osd tl">${rec}</div><div class="osd tr">${lbl}</div><div class="osd bl">${date}</div><div class="osd br">${time}</div>`;
+  } else if(osdMode==='cctv'){
+    const lbl = stamp || 'CAM 04 · NORTH ENTRANCE'; const mot = (tick%7<3) ? '<span style="color:#4f6">MOTION DETECTED</span>' : '';
+    html = `<div class="osd tl">${recorder?'<span class="dot"></span>':''}${lbl}</div><div class="osd tr">${date} ${time}</div><div class="osd bl">${mot}</div><div class="osd br">ID ${String(1000+tick%9000)}</div>
+      <div class="brk tl"></div><div class="brk tr"></div><div class="brk bl"></div><div class="brk br"></div>`;
+  } else if(osdMode==='body'){
+    const lbl = stamp || 'UNIT 12 · OFFICER 3391'; const bat = 100 - (tick%100);
+    html = `<div class="osd tl"><span class="dot"></span>${lbl}</div><div class="osd tr">BAT ${bat}% ▮▮▮${bat<40?'▯':'▮'}▯</div><div class="osd bl">${date} ${time}</div><div class="osd br">GPS LOCK · 10 fps</div>`;
+  } else if(osdMode==='drone'){
+    const lbl = stamp || 'UAV-07'; const alt=(120+Math.sin(t*0.3)*15).toFixed(0), hdg=Math.floor((t*4)%360), spd=(9+Math.sin(t*0.5)*3).toFixed(1);
+    html = `<div class="osd tl">${lbl} · ${recorder?'<span class="dot"></span>REC':'LIVE'}</div><div class="osd tr">${time}</div><div class="osd bl">ALT ${alt}m · SPD ${spd}m/s</div><div class="osd br">HDG ${String(hdg).padStart(3,'0')}° · SAT 11</div>
+      <div class="cross"></div><div class="hud-ring"></div><div class="hud-bar">${Array.from({length:19},(_,i)=>`<i style="height:${i%5==0?14:7}px"></i>`).join('')}</div>`;
+  }
+  overlay.innerHTML = html;
 }
 
 // ---------- camera ----------
@@ -429,26 +573,33 @@ $('#flip').onclick=async()=>{ facing = facing==='user'?'environment':'user'; try
 // ---------- controls UI ----------
 function buildPresets(){
   const box=$('#presets'); box.innerHTML='';
-  PRESETS.forEach(p=>{ const b=document.createElement('button'); b.className='chip'+(p===preset?' on':''); b.textContent=p.name;
+  requestAnimationFrame(()=>box.querySelector('.chip.on')?.scrollIntoView({inline:'center',block:'nearest'}));
+  let lastGroup=null;
+  PRESETS.forEach(p=>{ const g=p.group||'found';
+    if(g!==lastGroup){ const s=document.createElement('span'); s.className='lbl'; s.textContent={found:'Tape',trippy:'Trippy',game:'Game',cam:'Surveil',mutate:'Mutate'}[g]; box.appendChild(s); lastGroup=g; }
+    const b=document.createElement('button'); b.className='chip'+(p===preset?' on':''); b.textContent=p.name;
     b.onclick=()=>applyPreset(p); box.appendChild(b); });
 }
 function applyPreset(p){
-  preset=p; osdMode=p.osd;
+  preset=p; osdMode=p.osd; mutate.on=!!p.mutate; mutate.speed=p.mutate||mutate.speed; mutate.next=0; $('#mutate').classList.toggle('on',mutate.on);
   for(const k in PARAMS) state[k]=PARAMS[k].def;
   Object.assign(state,p.v);
   buildPresets(); buildSliders();
   localStorage.setItem('fff-preset',p.id);
 }
 function buildSliders(){
-  const box=$('#sliders'); box.innerHTML='';
+  const box=$('#sliders'); box.innerHTML=''; sliderEls={};
   const add=(k)=>{
     const P=PARAMS[k]; const row=document.createElement('div'); row.className='row';
     row.innerHTML=`<label>${P.label}</label><input type="range" min="${P.min}" max="${P.max}" step="0.01" value="${state[k]}"><output>${fmt(state[k])}</output>`;
     const inp=row.querySelector('input'), out=row.querySelector('output');
-    inp.oninput=()=>{ state[k]=+inp.value; out.textContent=fmt(state[k]); };
+    inp.oninput=()=>{ state[k]=+inp.value; out.textContent=fmt(state[k]); if(mutate.on) mutate.targets[k]=state[k]; };
+    sliderEls[k]={inp,out};
     box.appendChild(row);
   };
   const head=(txt)=>{ const r=document.createElement('div'); r.className='row head'; r.innerHTML=`<label>${txt}</label>`; box.appendChild(r); };
+  if(mutate.on){ head('Mutate'); const row=document.createElement('div'); row.className='row'; row.innerHTML=`<label>Mutate speed</label><input type="range" min="0.05" max="1" step="0.01" value="${mutate.speed}"><output>${fmt(mutate.speed)}</output>`;
+    const inp=row.querySelector('input'),out=row.querySelector('output'); inp.oninput=()=>{mutate.speed=+inp.value; out.textContent=fmt(mutate.speed);}; box.appendChild(row); }
   head(preset.name+' controls');
   preset.sliders.forEach(add);
   // extras: any other param someone might want, collapsed under "more"
@@ -464,6 +615,25 @@ function buildSliders(){
   box.appendChild(rnd);
 }
 const fmt=x=>x.toFixed(2);
+
+// ---------- mutate: sliders drift toward new random targets ----------
+const mutate={on:false,speed:.5,next:0,targets:{}};
+$('#mutate').onclick=()=>{ mutate.on=!mutate.on; mutate.next=0; $('#mutate').classList.toggle('on',mutate.on); buildSliders(); };
+function tickMutate(t){
+  if(!mutate.on) return;
+  if(t>mutate.next){
+    mutate.next = t + (1.5 + 8*(1-mutate.speed)) * (0.5+Math.random());
+    const pool = preset.sliders;
+    pool.forEach(k=>{ const P=PARAMS[k]; const keep = Math.random()<0.35; mutate.targets[k] = keep ? state[k] : P.min+Math.random()*(P.max-P.min); });
+    // occasionally throw in a wildcard from the whole param set
+    if(Math.random()<0.4){ const all=Object.keys(PARAMS); const k=all[Math.floor(Math.random()*all.length)]; const P=PARAMS[k]; mutate.targets[k]= Math.random()<0.5 ? P.def : P.min+Math.random()*(P.max-P.min)*0.6; }
+  }
+  const rate = 0.02 + 0.08*mutate.speed;
+  for(const k in mutate.targets){ state[k] += (mutate.targets[k]-state[k])*rate; }
+  if(Math.floor(t*6)!==mutate.lastUI){ mutate.lastUI=Math.floor(t*6); refreshSliderUI(); }
+}
+function refreshSliderUI(){ for(const [k,{inp,out}] of Object.entries(sliderEls)){ if(document.activeElement===inp) continue; inp.value=state[k]; out.textContent=fmt(state[k]); } }
+let sliderEls={};
 
 // ---------- photo ----------
 $('#snap').onclick=()=>{
