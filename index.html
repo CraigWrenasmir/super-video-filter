@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
@@ -13,7 +13,7 @@
     --fg:#e8e8e8; --dim:#8a8a8a; --acc:#d7ff3f; --rec:#ff2d2d;
     --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
   }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--mono);overflow:hidden;overscroll-behavior:none}
   body{display:flex;flex-direction:column}
 
@@ -838,6 +838,12 @@ function paintOffice(cx,w,h){
   const g=cx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(40,40,50,.5)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
 }
 buildBGs();
+
+// stop iOS double-tap / pinch zoom (touch-action alone isn't enough on older iPadOS)
+let lastTap=0;
+document.addEventListener('touchend',e=>{ const now=Date.now(); if(now-lastTap<350 && e.target.tagName!=='INPUT'){ e.preventDefault(); } lastTap=now; },{passive:false});
+document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
+document.addEventListener('gesturechange',e=>e.preventDefault(),{passive:false});
 
 // restore last preset
 const saved=PRESETS.find(p=>p.id===localStorage.getItem('fff-preset'));
