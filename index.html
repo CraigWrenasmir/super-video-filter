@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
-<title>Found Footage Filter</title>
+<title>Super Video Filter</title>
 <style>
   :root{
     --bg:#000; --panel:#111; --panel2:#1a1a1a; --line:#2a2a2a;
@@ -88,7 +88,7 @@
   <div id="overlay"></div>
   <div class="flash" id="flash"></div>
   <div id="splash">
-    <h1>Found Footage Filter</h1>
+    <h1>Super Video Filter</h1>
     <p>Point your camera at anything and make it look like a lost tape. Glitch it. VHS it. Send it to the Backrooms.</p>
     <button class="big" id="start">Start camera</button>
     <p id="err"></p>
@@ -641,7 +641,7 @@ $('#snap').onclick=()=>{
   const out=document.createElement('canvas'); out.width=canvas.width; out.height=canvas.height;
   const cx=out.getContext('2d'); cx.drawImage(canvas,0,0);
   burnOSD(cx,out.width,out.height);
-  out.toBlob(b=>saveBlob(b,`found-footage-${Date.now()}.png`),'image/png');
+  out.toBlob(b=>saveBlob(b,`super-video-${Date.now()}.png`),'image/png');
 };
 function burnOSD(cx,w,h){
   if(osdMode==='none') return;
@@ -664,7 +664,7 @@ function startRec(){
   chunks=[]; recorder=new MediaRecorder(mixed, mime?{mimeType:mime}:undefined);
   recorder.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
   recorder.onstop=()=>{ const ext=(recorder.mimeType||mime).includes('mp4')?'mp4':'webm';
-    saveBlob(new Blob(chunks,{type:recorder.mimeType||mime}),`found-footage-${Date.now()}.${ext}`); recorder=null; $('#record').classList.remove('rec'); $('#record').textContent='● Rec'; };
+    saveBlob(new Blob(chunks,{type:recorder.mimeType||mime}),`super-video-${Date.now()}.${ext}`); recorder=null; $('#record').classList.remove('rec'); $('#record').textContent='● Rec'; };
   recorder.start(250); $('#record').classList.add('rec'); $('#record').textContent='■ Stop';
 }
 function stopRec(){ recorder.stop(); }
@@ -672,7 +672,7 @@ function stopRec(){ recorder.stop(); }
 async function saveBlob(blob,name){
   const file=new File([blob],name,{type:blob.type});
   if(navigator.canShare && navigator.canShare({files:[file]})){
-    try{ await navigator.share({files:[file],title:'Found Footage Filter'}); return; }catch(e){ if(e.name==='AbortError') return; }
+    try{ await navigator.share({files:[file],title:'Super Video Filter'}); return; }catch(e){ if(e.name==='AbortError') return; }
   }
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click();
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);
