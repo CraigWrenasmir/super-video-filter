@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Found Footage Filter</title>
+<style>
+  :root{
+    --bg:#000; --panel:#111; --panel2:#1a1a1a; --line:#2a2a2a;
+    --fg:#e8e8e8; --dim:#8a8a8a; --acc:#d7ff3f; --rec:#ff2d2d;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:var(--mono);overflow:hidden;overscroll-behavior:none}
+  body{display:flex;flex-direction:column}
+
+  /* ---------- viewer ---------- */
+  #stage{position:relative;flex:1;min-height:0;background:#000;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  #gl{width:100%;height:100%;object-fit:contain;display:block;touch-action:none}
+  #video{display:none}
+  #overlay{position:absolute;inset:0;pointer-events:none;font-family:var(--mono)}
+  .osd{position:absolute;color:#fff;text-shadow:0 0 4px #000,0 0 2px #000;font-size:clamp(12px,2.4vw,20px);letter-spacing:.08em;opacity:.95}
+  .osd.tl{top:14px;left:16px}.osd.tr{top:14px;right:16px}.osd.bl{bottom:14px;left:16px}.osd.br{bottom:14px;right:16px}
+  .osd .dot{display:inline-block;width:.7em;height:.7em;border-radius:50%;background:var(--rec);margin-right:.4em;animation:blink 1s steps(1) infinite;vertical-align:baseline}
+  @keyframes blink{50%{opacity:0}}
+  #osdFont-vhs .osd{font-family:"Courier New",Courier,monospace;font-weight:bold;color:#fff}
+  #osdFont-cam .osd{font-family:var(--mono);color:#dfe}
+  #splash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#000;text-align:center;padding:24px;z-index:5}
+  #splash h1{font-size:clamp(22px,6vw,44px);margin:0;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-shadow:3px 0 var(--rec),-3px 0 #2df;animation:shake 3s infinite}
+  @keyframes shake{0%,94%,100%{transform:none}95%{transform:translate(2px,-1px) skewX(4deg)}97%{transform:translate(-3px,1px)}}
+  #splash p{color:var(--dim);max-width:44ch;margin:0;font-size:13px;line-height:1.5}
+  .big{font:inherit;font-size:15px;letter-spacing:.1em;text-transform:uppercase;background:var(--acc);color:#000;border:0;border-radius:6px;padding:14px 22px;cursor:pointer}
+  .big:active{transform:scale(.97)}
+  #err{color:var(--rec);font-size:12px;max-width:48ch;display:none}
+  .flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}
+
+  /* ---------- controls ---------- */
+  #ui{background:var(--panel);border-top:1px solid var(--line);flex:0 0 auto;max-height:52vh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+  #bar{display:flex;gap:6px;padding:8px 10px;align-items:center;border-bottom:1px solid var(--line)}
+  #bar button{font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:9px 10px;cursor:pointer;flex:1;white-space:nowrap}
+  #bar button:active{background:#222}
+  #bar button.rec{background:var(--rec);color:#fff;border-color:var(--rec)}
+  #bar button.on{border-color:var(--acc);color:var(--acc)}
+  #presets{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto}
+  #presets::-webkit-scrollbar{display:none}
+  .chip{font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:8px 13px;cursor:pointer;white-space:nowrap}
+  .chip.on{background:var(--acc);color:#000;border-color:var(--acc)}
+  #sliders{overflow-y:auto;padding:8px 12px 10px;-webkit-overflow-scrolling:touch}
+  .row{display:grid;grid-template-columns:9.5em 1fr 3.2em;align-items:center;gap:10px;padding:5px 0}
+  .row label{font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row output{font-size:11px;color:var(--fg);text-align:right}
+  .row.head{padding-top:10px}
+  .row.head label{color:var(--acc)}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;margin:0}
+  input[type=range]::-webkit-slider-runnable-track{height:4px;background:#333;border-radius:2px}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:var(--fg);margin-top:-9px;border:2px solid #000}
+  input[type=range]::-moz-range-track{height:4px;background:#333;border-radius:2px}
+  input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--fg);border:2px solid #000}
+  .row input[type=text]{font:inherit;font-size:12px;background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:6px 8px;grid-column:2/4}
+  @media (min-width:900px) and (orientation:landscape){
+    body{flex-direction:row}
+    #ui{max-height:none;width:360px;border-top:0;border-left:1px solid var(--line)}
+    #presets{flex-wrap:wrap}
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="gl"></canvas>
+  <div id="overlay"></div>
+  <div class="flash" id="flash"></div>
+  <div id="splash">
+    <h1>Found Footage Filter</h1>
+    <p>Point your camera at anything and make it look like a lost tape. Glitch it. VHS it. Send it to the Backrooms.</p>
+    <button class="big" id="start">Start camera</button>
+    <p id="err"></p>
+    <p style="font-size:11px">Nothing is uploaded — everything happens on this device.</p>
+  </div>
+</div>
+
+<div id="ui">
+  <div id="bar">
+    <button id="flip">Flip</button>
+    <button id="snap">Photo</button>
+    <button id="record">● Rec</button>
+    <button id="fs">Full</button>
+    <button id="hide">Hide</button>
+  </div>
+  <div id="presets"></div>
+  <div id="sliders"></div>
+</div>
+
+<script>
+// ============================================================
+//  FILTER DEFINITIONS
+//  Each preset sets uniform values; each has its own slider list.
+// ============================================================
+const PARAMS = {
+  // global
+  grain:     {label:'Grain',        min:0, max:1, def:0.15},
+  vignette:  {label:'Vignette',     min:0, max:1, def:0.3},
+  contrast:  {label:'Contrast',     min:0.5, max:2, def:1},
+  brightness:{label:'Brightness',   min:0.3, max:1.8, def:1},
+  saturation:{label:'Saturation',   min:0, max:2, def:1},
+  blur:      {label:'Softness',     min:0, max:1, def:0},
+  pixelate:  {label:'Pixelate',     min:0, max:1, def:0},
+  // vhs
+  tracking:  {label:'Tracking bars',min:0, max:1, def:0},
+  bleed:     {label:'Colour bleed', min:0, max:1, def:0},
+  scanlines: {label:'Scanlines',    min:0, max:1, def:0},
+  wobble:    {label:'Tape wobble',  min:0, max:1, def:0},
+  tapeNoise: {label:'Tape noise',   min:0, max:1, def:0},
+  // glitch
+  blocks:    {label:'Block glitch', min:0, max:1, def:0},
+  rgbSplit:  {label:'RGB split',    min:0, max:1, def:0},
+  smear:     {label:'Datamosh smear',min:0,max:1, def:0},
+  tear:      {label:'Screen tear',  min:0, max:1, def:0},
+  invertFlash:{label:'Invert flashes',min:0,max:1,def:0},
+  // backrooms
+  yellow:    {label:'Yellow tint',  min:0, max:1, def:0},
+  flicker:   {label:'Light flicker',min:0, max:1, def:0},
+  lowres:    {label:'Low-res',      min:0, max:1, def:0},
+  interlace: {label:'Interlace',    min:0, max:1, def:0},
+  // looks
+  nightvision:{label:'Night vision',min:0, max:1, def:0},
+  thermal:   {label:'Thermal',      min:0, max:1, def:0},
+  sepia:     {label:'Sepia',        min:0, max:1, def:0},
+  scratches: {label:'Film scratches',min:0,max:1, def:0},
+  gateWeave: {label:'Gate weave',   min:0, max:1, def:0},
+  mono:      {label:'Black & white',min:0, max:1, def:0},
+  posterize: {label:'Posterize',    min:0, max:1, def:0},
+  warp:      {label:'Warp / melt',  min:0, max:1, def:0},
+  fisheye:   {label:'Fisheye',      min:0, max:1, def:0},
+  edges:     {label:'Edge detect',  min:0, max:1, def:0},
+  ghost:     {label:'Ghost trail',  min:0, max:1, def:0},
+};
+
+const PRESETS = [
+  {id:'clean', name:'Clean', osd:'none',
+   sliders:['grain','vignette','contrast','brightness','saturation','blur','pixelate'], v:{grain:0,vignette:0}},
+  {id:'vhs', name:'VHS', osd:'vhs',
+   sliders:['tracking','bleed','scanlines','wobble','tapeNoise','saturation','contrast','blur','vignette'],
+   v:{tracking:.5,bleed:.6,scanlines:.5,wobble:.35,tapeNoise:.5,saturation:1.15,blur:.35,vignette:.35,grain:.25,contrast:1.1}},
+  {id:'glitch', name:'Glitch', osd:'none',
+   sliders:['blocks','rgbSplit','smear','tear','invertFlash','posterize','scanlines','grain'],
+   v:{blocks:.55,rgbSplit:.5,smear:.4,tear:.4,invertFlash:.15,grain:.2,vignette:.2}},
+  {id:'backrooms', name:'Backrooms', osd:'vhs',
+   sliders:['yellow','flicker','lowres','interlace','tapeNoise','vignette','contrast','blur','grain'],
+   v:{yellow:.8,flicker:.5,lowres:.55,interlace:.5,tapeNoise:.3,vignette:.55,contrast:1.15,blur:.3,grain:.35,saturation:.8,tracking:.15,wobble:.15}},
+  {id:'horror', name:'Analog Horror', osd:'vhs',
+   sliders:['tapeNoise','tracking','warp','tear','interlace','invertFlash','scanlines','contrast','vignette','mono'],
+   v:{tapeNoise:.7,tracking:.7,warp:.35,tear:.5,interlace:.6,invertFlash:.25,scanlines:.6,contrast:1.4,vignette:.7,grain:.5,saturation:.4,bleed:.5,wobble:.5}},
+  {id:'seccam', name:'Security Cam', osd:'cam',
+   sliders:['mono','lowres','interlace','grain','contrast','brightness','fisheye','scanlines'],
+   v:{mono:1,lowres:.45,interlace:.4,grain:.4,contrast:1.25,brightness:1.05,fisheye:.4,scanlines:.3,vignette:.3}},
+  {id:'night', name:'Night Vision', osd:'cam',
+   sliders:['nightvision','grain','brightness','contrast','vignette','blur','scanlines'],
+   v:{nightvision:1,grain:.55,brightness:1.4,contrast:1.2,vignette:.6,blur:.2,scanlines:.25}},
+  {id:'thermal', name:'Thermal', osd:'cam',
+   sliders:['thermal','posterize','blur','grain','contrast','brightness'],
+   v:{thermal:1,posterize:.3,blur:.35,grain:.15,contrast:1.1,vignette:.2}},
+  {id:'film', name:'Old Film', osd:'none',
+   sliders:['sepia','scratches','gateWeave','grain','flicker','vignette','contrast','blur'],
+   v:{sepia:.8,scratches:.6,gateWeave:.5,grain:.5,flicker:.35,vignette:.6,contrast:1.2,blur:.15,saturation:.7}},
+  {id:'melt', name:'Melt', osd:'none',
+   sliders:['warp','ghost','smear','rgbSplit','saturation','posterize','fisheye'],
+   v:{warp:.7,ghost:.6,smear:.2,rgbSplit:.3,saturation:1.4,vignette:.3}},
+  {id:'sketch', name:'Edge Sketch', osd:'none',
+   sliders:['edges','mono','posterize','grain','contrast','pixelate'],
+   v:{edges:1,mono:.9,grain:.2,contrast:1.3,vignette:.2}},
+  {id:'lowfi', name:'8-bit', osd:'none',
+   sliders:['pixelate','posterize','saturation','contrast','scanlines','grain'],
+   v:{pixelate:.5,posterize:.7,saturation:1.3,contrast:1.15,scanlines:.2}},
+];
+
+// ============================================================
+//  SHADER
+// ============================================================
+const VERT = `
+attribute vec2 p; varying vec2 v;
+void main(){ v = p*0.5+0.5; gl_Position = vec4(p,0.,1.); }`;
+
+const FRAG = `
+precision highp float;
+varying vec2 v;
+uniform sampler2D tex;   // camera
+uniform sampler2D prev;  // last frame (for ghost/smear)
+uniform vec2 res; uniform float t; uniform float flipX;
+uniform float grain,vignette,contrast,brightness,saturation,blur,pixelate;
+uniform float tracking,bleed,scanlines,wobble,tapeNoise;
+uniform float blocks,rgbSplit,smear,tear,invertFlash;
+uniform float yellow,flicker,lowres,interlace;
+uniform float nightvision,thermal,sepia,scratches,gateWeave,mono,posterize,warp,fisheye,edges,ghost;
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float hash1(float x){ return fract(sin(x*12.9898)*43758.5453); }
+float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y); }
+
+vec3 sampleCam(vec2 uv){
+  uv = clamp(uv,0.001,0.999);
+  if(flipX>0.5) uv.x = 1.-uv.x;
+  return texture2D(tex,uv).rgb;
+}
+vec3 samplePrev(vec2 uv){ return texture2D(prev,clamp(uv,0.,1.)).rgb; }
+
+void main(){
+  vec2 uv = v;
+  vec2 px = 1./res;
+  float ft = floor(t*24.); // "frame" time for stepped effects
+
+  // ---- geometry: fisheye, gate weave, wobble, warp, tear, blocks ----
+  if(fisheye>0.){ vec2 c=uv-0.5; float r=length(c); uv = 0.5 + c*(1.+ fisheye*1.2*r*r) / (1.+fisheye*0.35); }
+  if(gateWeave>0.){ uv += vec2(noise(vec2(t*3.,1.))-.5, noise(vec2(t*2.3,7.))-.5)*0.012*gateWeave; }
+  if(wobble>0.){ uv.x += sin(uv.y*40.+t*9.)*0.0025*wobble + (noise(vec2(t*15.,uv.y*3.))-.5)*0.01*wobble;
+                 float band = step(0.985, noise(vec2(t*2., floor(uv.y*20.))));
+                 uv.x += band*(noise(vec2(t*30.,uv.y*100.))-.5)*0.15*wobble; }
+  if(warp>0.){ uv += vec2(noise(uv*3.+t*.6), noise(uv*3.-t*.5))*0.12*warp - 0.06*warp; }
+  if(tear>0.){ float ty = hash1(ft*0.37); float th = 0.02+0.15*hash1(ft*0.91);
+               if(abs(uv.y-ty)<th && hash1(ft)<tear) uv.x += (hash1(ft*1.7)-.5)*0.25*tear; }
+  if(blocks>0.){ vec2 bs = vec2(6.+floor(hash1(ft)*10.), 8.+floor(hash1(ft*3.)*12.));
+                 vec2 cell = floor(uv*bs); float r = hash(cell+ft);
+                 if(r > 1.-blocks*0.35){ uv += (vec2(hash(cell+1.7+ft), hash(cell+9.1+ft))-.5)*0.2*blocks; } }
+  if(tracking>0.){ float band = smoothstep(0.,0.15, 1.-abs(fract(uv.y - t*0.35)*2.-1.)); // rolling bar
+                   float on = step(1.-tracking, hash1(floor(t*2.)));
+                   uv.x += band*on*(noise(vec2(t*40.,uv.y*200.))-.5)*0.08*tracking;
+                   uv.y += band*on*0.004*tracking; }
+
+  // ---- resolution: pixelate / low-res ----
+  float pxs = max(pixelate*40., lowres*4.5);
+  if(pxs>0.){ vec2 g = res/pxs; uv = (floor(uv*g)+.5)/g; }
+
+  // ---- sampling: blur / bleed / rgb split ----
+  vec3 col;
+  float sp = blur*3.5*px.x*(res.x/640.) + bleed*3.*px.x*(res.x/640.);
+  float split = rgbSplit*(0.01+0.02*hash1(ft*.5)) * (hash1(ft*1.3)<0.9?1.:3.);
+  if(sp>0. || split>0.){
+    float r = sampleCam(uv+vec2(split+sp,0.)).r + sampleCam(uv+vec2(split-sp,0.)).r;
+    float g = sampleCam(uv+vec2(0.,0.)).g + sampleCam(uv+vec2(sp*0.5,sp*0.5)).g;
+    float b = sampleCam(uv-vec2(split+sp,0.)).b + sampleCam(uv-vec2(split-sp,0.)).b;
+    col = vec3(r,g,b)*0.5;
+    if(bleed>0.){ vec3 wide = (sampleCam(uv+vec2(sp*2.5,0.))+sampleCam(uv-vec2(sp*2.5,0.)))*.5;
+                  col = mix(col, vec3(col.r, mix(col.g,wide.g,.5), wide.b), bleed*0.7); }
+  } else col = sampleCam(uv);
+
+  // ---- edge detect ----
+  if(edges>0.){
+    float d = 1.5; vec3 a=sampleCam(uv+px*vec2(-d,0)), b=sampleCam(uv+px*vec2(d,0)), c=sampleCam(uv+px*vec2(0,-d)), e=sampleCam(uv+px*vec2(0,d));
+    float ed = length(a-b)+length(c-e); vec3 line = vec3(1.-smoothstep(0.1,0.5,ed*2.));
+    col = mix(col, line, edges);
+  }
+
+  // ---- temporal: ghost / smear (uses previous output frame) ----
+  if(ghost>0.) col = mix(col, samplePrev(v), ghost*0.85);
+  if(smear>0.){ float keep = step(1.-smear*0.6, hash(floor(v*vec2(12.,9.))+floor(t*3.)));
+                col = mix(col, samplePrev(v + vec2(0.002,0.)*smear), keep*0.93*smear); }
+
+  // ---- colour grading ----
+  float luma = dot(col, vec3(.299,.587,.114));
+  col = mix(vec3(luma), col, saturation);
+  col = (col-.5)*contrast+.5;
+  col *= brightness;
+  if(sepia>0.) col = mix(col, vec3(luma)*vec3(1.2,1.,0.75), sepia);
+  if(yellow>0.){ col = mix(col, col*vec3(1.15,1.05,0.65)+vec3(.08,.07,0.), yellow*0.8); }
+  if(mono>0.) col = mix(col, vec3(dot(col,vec3(.299,.587,.114))), mono);
+  if(nightvision>0.){ float l = dot(col,vec3(.299,.587,.114)); l = pow(l*1.3,0.8);
+                      col = mix(col, vec3(l*0.25, l*1.0, l*0.3), nightvision); }
+  if(thermal>0.){ float l = dot(col,vec3(.299,.587,.114));
+                  vec3 tc = l<0.25? mix(vec3(0,0,.3),vec3(0,.3,1.),l*4.) : l<0.5? mix(vec3(0,.3,1.),vec3(0,1,.3),(l-.25)*4.) : l<0.75? mix(vec3(0,1,.3),vec3(1,1,0),(l-.5)*4.) : mix(vec3(1,1,0),vec3(1,1,1),(l-.75)*4.);
+                  col = mix(col, tc, thermal); }
+  if(posterize>0.){ float lv = mix(64., 3., posterize); col = mix(col, floor(col*lv+.5)/lv, min(1.,posterize*4.)); }
+
+  // ---- overlays ----
+  if(scanlines>0.){ float s = sin(v.y*res.y*3.14159)*.5+.5; col *= 1.-scanlines*0.35*s; }
+  if(interlace>0.){ float line = mod(floor(v.y*res.y), 2.); float offs = (line<1.)?0.:1.;
+                    vec3 other = sampleCam(uv+vec2(0.004*interlace*(hash1(ft)-.5)*4., 0.));
+                    col = mix(col, mix(col,other,offs), interlace*0.6); col *= 1.-interlace*0.18*line; }
+  if(tapeNoise>0.){ float n = hash(vec2(v.x*res.x, v.y*res.y)+fract(t)*100.);
+                    float streak = step(0.995 - tapeNoise*0.02, noise(vec2(t*60., v.y*300.)));
+                    col = mix(col, vec3(n), tapeNoise*0.25*n);
+                    col += streak*tapeNoise*vec3(0.8);
+                    // white dropout lines
+                    float drop = step(0.998 - tapeNoise*0.004, hash(vec2(floor(v.y*res.y), ft)));
+                    col = mix(col, vec3(1.), drop*step(0.4, noise(vec2(v.x*8.+ft, 0.)))); }
+  if(scratches>0.){ float sx = hash1(floor(t*8.)); float sc = step(1.-scratches*0.9, hash1(floor(t*8.)+1.)) * (1.-smoothstep(0.,0.003,abs(v.x-sx)));
+                    col += sc*0.8;
+                    float dust = step(0.9995-scratches*0.0005, hash(floor(v*res/2.)+ft)); col -= dust*0.9; }
+  if(flicker>0.){ col *= 1. - flicker*0.5*step(0.75, noise(vec2(t*20.,2.))) * hash1(ft); col *= 1.-flicker*0.15*hash1(ft*.3); }
+  if(grain>0.){ float g = hash(v*res+fract(t*7.)*10.)-.5; col += g*grain*0.5; }
+  if(invertFlash>0.){ if(hash1(ft) < invertFlash*0.12) col = 1.-col; }
+  if(vignette>0.){ float d = distance(v, vec2(.5)); col *= 1.-smoothstep(0.35, 0.95, d)*vignette*1.3; }
+
+  gl_FragColor = vec4(clamp(col,0.,1.),1.);
+}`;
+
+// ============================================================
+//  APP
+// ============================================================
+const $ = s=>document.querySelector(s);
+const video=$('#video'), canvas=$('#gl'), overlay=$('#overlay'), splash=$('#splash'), errEl=$('#err');
+const state = {}; for(const k in PARAMS) state[k]=PARAMS[k].def;
+let preset = PRESETS[0], facing='environment', flipX=false, stamp=localStorage.getItem('fff-stamp')||'';
+let gl, prog, fbA, fbB, texCam, uni={};
+let recorder=null, chunks=[], stream=null;
+
+// ---------- WebGL setup ----------
+function initGL(){
+  gl = canvas.getContext('webgl',{preserveDrawingBuffer:true, antialias:false});
+  if(!gl) throw new Error('WebGL not available');
+  const sh=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s;};
+  prog=gl.createProgram(); gl.attachShader(prog,sh(gl.VERTEX_SHADER,VERT)); gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FRAG)); gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  const names=['tex','prev','res','t','flipX',...Object.keys(PARAMS)];
+  names.forEach(n=>uni[n]=gl.getUniformLocation(prog,n));
+  texCam=mkTex(); gl.uniform1i(uni.tex,0); gl.uniform1i(uni.prev,1);
+}
+function mkTex(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR); return t; }
+function mkFB(w,h){ const t=mkTex(); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); return {f,t,w,h}; }
+function sizeCanvas(){
+  const vw=video.videoWidth||640, vh=video.videoHeight||480;
+  const maxW=1280; const s=Math.min(1,maxW/vw);
+  const w=Math.round(vw*s), h=Math.round(vh*s);
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; fbA=mkFB(w,h); fbB=mkFB(w,h); }
+}
+
+// ---------- render loop ----------
+const t0=performance.now();
+function frame(){
+  requestAnimationFrame(frame);
+  if(video.readyState<2) return;
+  sizeCanvas();
+  const t=(performance.now()-t0)/1000;
+  gl.useProgram(prog);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texCam);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,video);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,fbB.t);
+  gl.uniform2f(uni.res,canvas.width,canvas.height); gl.uniform1f(uni.t,t); gl.uniform1f(uni.flipX,flipX?1:0);
+  for(const k in PARAMS) gl.uniform1f(uni[k],state[k]);
+  // render to fbA (becomes "prev" next frame) then blit to screen by drawing again
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbA.f); gl.viewport(0,0,canvas.width,canvas.height); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,canvas.width,canvas.height); gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  [fbA,fbB]=[fbB,fbA];
+  drawOSD(t);
+}
+
+// ---------- on-screen text ----------
+let osdMode='none';
+function drawOSD(t){
+  if(osdMode==='none'){ if(overlay.innerHTML) overlay.innerHTML=''; return; }
+  const d=new Date();
+  const pad=n=>String(n).padStart(2,'0');
+  const time=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const date=`${pad(d.getDate())}.${pad(d.getMonth()+1)}.${d.getFullYear()}`;
+  const rec = recorder ? '<span class="dot"></span>REC' : (osdMode==='vhs'?'▶ PLAY':'');
+  const lbl = stamp || (osdMode==='vhs'?'SP':'CAM 01');
+  overlay.id = 'osdFont-'+osdMode;
+  overlay.innerHTML = `<div class="osd tl">${rec}</div><div class="osd tr">${lbl}</div><div class="osd bl">${date}</div><div class="osd br">${time}</div>`;
+}
+
+// ---------- camera ----------
+async function startCamera(){
+  errEl.style.display='none';
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  const tries=[
+    {video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:true},
+    {video:{facingMode:{ideal:facing}},audio:true},
+    {video:true,audio:false},
+  ];
+  let lastErr;
+  for(const c of tries){ try{ stream=await navigator.mediaDevices.getUserMedia(c); break; }catch(e){ lastErr=e; } }
+  if(!stream) throw lastErr||new Error('No camera');
+  video.srcObject=stream; await video.play();
+  const track=stream.getVideoTracks()[0]; const s=track.getSettings();
+  flipX = (s.facingMode==='user') || (facing==='user' && !s.facingMode);
+}
+$('#start').onclick=async()=>{
+  try{
+    if(!navigator.mediaDevices?.getUserMedia) throw new Error('Camera API not available. Open this page over https (or localhost).');
+    if(!gl) initGL();
+    await startCamera();
+    splash.style.display='none';
+    requestAnimationFrame(frame);
+  }catch(e){ errEl.textContent='Camera problem: '+(e.message||e.name); errEl.style.display='block'; console.error(e); }
+};
+$('#flip').onclick=async()=>{ facing = facing==='user'?'environment':'user'; try{ await startCamera(); }catch(e){ console.error(e); } };
+
+// ---------- controls UI ----------
+function buildPresets(){
+  const box=$('#presets'); box.innerHTML='';
+  PRESETS.forEach(p=>{ const b=document.createElement('button'); b.className='chip'+(p===preset?' on':''); b.textContent=p.name;
+    b.onclick=()=>applyPreset(p); box.appendChild(b); });
+}
+function applyPreset(p){
+  preset=p; osdMode=p.osd;
+  for(const k in PARAMS) state[k]=PARAMS[k].def;
+  Object.assign(state,p.v);
+  buildPresets(); buildSliders();
+  localStorage.setItem('fff-preset',p.id);
+}
+function buildSliders(){
+  const box=$('#sliders'); box.innerHTML='';
+  const add=(k)=>{
+    const P=PARAMS[k]; const row=document.createElement('div'); row.className='row';
+    row.innerHTML=`<label>${P.label}</label><input type="range" min="${P.min}" max="${P.max}" step="0.01" value="${state[k]}"><output>${fmt(state[k])}</output>`;
+    const inp=row.querySelector('input'), out=row.querySelector('output');
+    inp.oninput=()=>{ state[k]=+inp.value; out.textContent=fmt(state[k]); };
+    box.appendChild(row);
+  };
+  const head=(txt)=>{ const r=document.createElement('div'); r.className='row head'; r.innerHTML=`<label>${txt}</label>`; box.appendChild(r); };
+  head(preset.name+' controls');
+  preset.sliders.forEach(add);
+  // extras: any other param someone might want, collapsed under "more"
+  head('More');
+  Object.keys(PARAMS).filter(k=>!preset.sliders.includes(k)).forEach(add);
+  const r=document.createElement('div'); r.className='row'; r.innerHTML=`<label>Label text</label><input type="text" placeholder="e.g. TAPE 03 / CAM 01" value="${stamp.replace(/"/g,'&quot;')}">`;
+  r.querySelector('input').oninput=e=>{ stamp=e.target.value; localStorage.setItem('fff-stamp',stamp); };
+  box.appendChild(r);
+  const rnd=document.createElement('button'); rnd.className='chip'; rnd.style.marginTop='10px'; rnd.textContent='🎲 Randomise sliders';
+  rnd.onclick=()=>{ preset.sliders.forEach(k=>{ const P=PARAMS[k]; state[k]=+(P.min+Math.random()*(P.max-P.min)).toFixed(2); }); buildSliders(); };
+  box.appendChild(rnd);
+}
+const fmt=x=>x.toFixed(2);
+
+// ---------- photo ----------
+$('#snap').onclick=()=>{
+  const fl=$('#flash'); fl.style.opacity=.9; setTimeout(()=>fl.style.opacity=0,60);
+  const out=document.createElement('canvas'); out.width=canvas.width; out.height=canvas.height;
+  const cx=out.getContext('2d'); cx.drawImage(canvas,0,0);
+  burnOSD(cx,out.width,out.height);
+  out.toBlob(b=>saveBlob(b,`found-footage-${Date.now()}.png`),'image/png');
+};
+function burnOSD(cx,w,h){
+  if(osdMode==='none') return;
+  const items=[...overlay.querySelectorAll('.osd')]; const fs=Math.round(h*0.035);
+  cx.font=`bold ${fs}px ${osdMode==='vhs'?'"Courier New",monospace':'Menlo,monospace'}`; cx.fillStyle='#fff'; cx.shadowColor='#000'; cx.shadowBlur=6;
+  items.forEach(el=>{ const txt=el.textContent.trim(); if(!txt) return;
+    const x = el.classList.contains('tl')||el.classList.contains('bl') ? fs : w - cx.measureText(txt).width - fs;
+    const y = el.classList.contains('tl')||el.classList.contains('tr') ? fs*1.6 : h - fs*0.7;
+    cx.fillText(txt,x,y); });
+}
+
+// ---------- video recording ----------
+$('#record').onclick=()=>{ recorder ? stopRec() : startRec(); };
+function startRec(){
+  if(!window.MediaRecorder){ alert('Recording not supported in this browser.'); return; }
+  const vs=canvas.captureStream(30);
+  const audio=stream?.getAudioTracks()||[];
+  const mixed=new MediaStream([...vs.getVideoTracks(),...audio]);
+  const mime=['video/mp4','video/webm;codecs=vp9','video/webm'].find(m=>MediaRecorder.isTypeSupported(m))||'';
+  chunks=[]; recorder=new MediaRecorder(mixed, mime?{mimeType:mime}:undefined);
+  recorder.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  recorder.onstop=()=>{ const ext=(recorder.mimeType||mime).includes('mp4')?'mp4':'webm';
+    saveBlob(new Blob(chunks,{type:recorder.mimeType||mime}),`found-footage-${Date.now()}.${ext}`); recorder=null; $('#record').classList.remove('rec'); $('#record').textContent='● Rec'; };
+  recorder.start(250); $('#record').classList.add('rec'); $('#record').textContent='■ Stop';
+}
+function stopRec(){ recorder.stop(); }
+
+async function saveBlob(blob,name){
+  const file=new File([blob],name,{type:blob.type});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file],title:'Found Footage Filter'}); return; }catch(e){ if(e.name==='AbortError') return; }
+  }
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);
+}
+
+// ---------- misc ----------
+$('#fs').onclick=()=>{ const el=document.documentElement;
+  if(document.fullscreenElement) document.exitFullscreen(); else (el.requestFullscreen||el.webkitRequestFullscreen)?.call(el); };
+let hidden=false;
+$('#hide').onclick=()=>{ hidden=!hidden; $('#presets').style.display=hidden?'none':''; $('#sliders').style.display=hidden?'none':''; $('#hide').textContent=hidden?'Show':'Hide'; };
+// tap the picture to toggle controls too
+canvas.addEventListener('click',()=>$('#hide').click());
+
+// restore last preset
+const saved=PRESETS.find(p=>p.id===localStorage.getItem('fff-preset'));
+applyPreset(saved||PRESETS[1]);
+if(!window.isSecureContext) { errEl.textContent='Cameras only work on https or localhost.'; errEl.style.display='block'; }
+</script>
+</body>
+</html>
