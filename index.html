@@ -46,6 +46,11 @@
   #bar button.on{border-color:var(--acc);color:var(--acc)}
   #presets{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto}
   #presets::-webkit-scrollbar{display:none}
+  #bgs{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
+  #bgs::-webkit-scrollbar{display:none}
+  #bgs .lbl{font-size:10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;padding-right:4px;white-space:nowrap}
+  .chip.bg{border-color:#3a3a3a}.chip.bg.on{background:#2df;border-color:#2df}
+  .chip.wait{opacity:.5}
   .chip{font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:8px 13px;cursor:pointer;white-space:nowrap}
   .chip.on{background:var(--acc);color:#000;border-color:var(--acc)}
   #sliders{overflow-y:auto;padding:8px 12px 10px;-webkit-overflow-scrolling:touch}
@@ -63,7 +68,7 @@
   @media (min-width:900px) and (orientation:landscape){
     body{flex-direction:row}
     #ui{max-height:none;width:360px;border-top:0;border-left:1px solid var(--line)}
-    #presets{flex-wrap:wrap}
+    #presets,#bgs{flex-wrap:wrap}
   }
 </style>
 </head>
@@ -92,6 +97,7 @@
     <button id="hide">Hide</button>
   </div>
   <div id="presets"></div>
+  <div id="bgs"></div>
   <div id="sliders"></div>
 </div>
 
@@ -190,6 +196,10 @@ precision highp float;
 varying vec2 v;
 uniform sampler2D tex;   // camera
 uniform sampler2D prev;  // last frame (for ghost/smear)
+uniform sampler2D mask;  // person segmentation (1=person)
+uniform sampler2D bg;    // virtual background scene
+uniform float bgMode;    // 0 none, 1 image, 2 static, 3 void
+uniform float maskSoft, maskShift, bgScroll;
 uniform vec2 res; uniform float t; uniform float flipX;
 uniform float grain,vignette,contrast,brightness,saturation,blur,pixelate;
 uniform float tracking,bleed,scanlines,wobble,tapeNoise;
@@ -202,10 +212,24 @@ float hash1(float x){ return fract(sin(x*12.9898)*43758.5453); }
 float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
   return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y); }
 
+vec3 sampleBG(vec2 uv){
+  if(bgMode<1.5){ return texture2D(bg, vec2(uv.x, 1.-uv.y)).rgb; }
+  if(bgMode<2.5){ float n = hash(floor(uv*res/2.)+fract(t*13.)*50.); return vec3(n*0.9); }
+  // void grid
+  vec2 g = fract(uv*vec2(16.,9.) + vec2(0., t*0.15*bgScroll)); float line = step(0.96,g.x)+step(0.96,g.y);
+  return vec3(0.02,0.02,0.04) + vec3(0.1,0.9,0.5)*min(line,1.)*0.5;
+}
 vec3 sampleCam(vec2 uv){
   uv = clamp(uv,0.001,0.999);
   if(flipX>0.5) uv.x = 1.-uv.x;
-  return texture2D(tex,uv).rgb;
+  vec3 c = texture2D(tex,uv).rgb;
+  if(bgMode>0.5){
+    float m = texture2D(mask,uv).r;
+    m = smoothstep(0.5-maskSoft*0.45+maskShift*0.3, 0.5+maskSoft*0.45+maskShift*0.3, m);
+    vec2 buv = uv; if(flipX>0.5) buv.x = 1.-buv.x;
+    c = mix(sampleBG(buv), c, m);
+  }
+  return c;
 }
 vec3 samplePrev(vec2 uv){ return texture2D(prev,clamp(uv,0.,1.)).rgb; }
 
@@ -305,7 +329,7 @@ const $ = s=>document.querySelector(s);
 const video=$('#video'), canvas=$('#gl'), overlay=$('#overlay'), splash=$('#splash'), errEl=$('#err');
 const state = {}; for(const k in PARAMS) state[k]=PARAMS[k].def;
 let preset = PRESETS[0], facing='environment', flipX=false, stamp=localStorage.getItem('fff-stamp')||'';
-let gl, prog, fbA, fbB, texCam, uni={};
+let gl, prog, fbA, fbB, texCam, texMask, texBG, uni={};
 let recorder=null, chunks=[], stream=null;
 
 // ---------- WebGL setup ----------
@@ -320,9 +344,10 @@ function initGL(){
   const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   const loc=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-  const names=['tex','prev','res','t','flipX',...Object.keys(PARAMS)];
+  const names=['tex','prev','mask','bg','bgMode','maskSoft','maskShift','bgScroll','res','t','flipX',...Object.keys(PARAMS)];
   names.forEach(n=>uni[n]=gl.getUniformLocation(prog,n));
-  texCam=mkTex(); gl.uniform1i(uni.tex,0); gl.uniform1i(uni.prev,1);
+  texCam=mkTex(); texMask=mkTex(); texBG=mkTex(); gl.uniform1i(uni.tex,0); gl.uniform1i(uni.prev,1); gl.uniform1i(uni.mask,2); gl.uniform1i(uni.bg,3);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,texMask); gl.texImage2D(gl.TEXTURE_2D,0,gl.LUMINANCE,1,1,0,gl.LUMINANCE,gl.UNSIGNED_BYTE,new Uint8Array([255]));
 }
 function mkTex(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
@@ -348,6 +373,8 @@ function frame(){
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texCam);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,video);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,fbB.t);
+  updateMask();
+  gl.uniform1f(uni.bgMode, bgActive ? BGS[bgIdx].mode : 0); gl.uniform1f(uni.maskSoft,bgState.soft); gl.uniform1f(uni.maskShift,bgState.shift); gl.uniform1f(uni.bgScroll,1);
   gl.uniform2f(uni.res,canvas.width,canvas.height); gl.uniform1f(uni.t,t); gl.uniform1f(uni.flipX,flipX?1:0);
   for(const k in PARAMS) gl.uniform1f(uni[k],state[k]);
   // render to fbA (becomes "prev" next frame) then blit to screen by drawing again
@@ -393,6 +420,7 @@ $('#start').onclick=async()=>{
     if(!gl) initGL();
     await startCamera();
     splash.style.display='none';
+    const sb=BGS.findIndex(b=>b.id===localStorage.getItem('fff-bg')); if(sb>0) selectBG(sb);
     requestAnimationFrame(frame);
   }catch(e){ errEl.textContent='Camera problem: '+(e.message||e.name); errEl.style.display='block'; console.error(e); }
 };
@@ -424,6 +452,8 @@ function buildSliders(){
   head(preset.name+' controls');
   preset.sliders.forEach(add);
   // extras: any other param someone might want, collapsed under "more"
+  if(bgActive||bgIdx>0){ head('Scene cut-out');
+    [['soft','Edge softness',0,1],['shift','Cut-out bias',-1,1]].forEach(([k,l,mn,mx])=>{ const row=document.createElement('div'); row.className='row'; row.innerHTML=`<label>${l}</label><input type="range" min="${mn}" max="${mx}" step="0.01" value="${bgState[k]}"><output>${fmt(bgState[k])}</output>`; const inp=row.querySelector('input'),out=row.querySelector('output'); inp.oninput=()=>{bgState[k]=+inp.value; out.textContent=fmt(bgState[k]);}; box.appendChild(row); }); }
   head('More');
   Object.keys(PARAMS).filter(k=>!preset.sliders.includes(k)).forEach(add);
   const r=document.createElement('div'); r.className='row'; r.innerHTML=`<label>Label text</label><input type="text" placeholder="e.g. TAPE 03 / CAM 01" value="${stamp.replace(/"/g,'&quot;')}">`;
@@ -485,6 +515,159 @@ let hidden=false;
 $('#hide').onclick=()=>{ hidden=!hidden; $('#presets').style.display=hidden?'none':''; $('#sliders').style.display=hidden?'none':''; $('#hide').textContent=hidden?'Show':'Hide'; };
 // tap the picture to toggle controls too
 canvas.addEventListener('click',()=>$('#hide').click());
+
+// ============================================================
+//  VIRTUAL BACKGROUNDS (person segmentation runs on-device)
+// ============================================================
+const BGS=[
+  {id:'none',name:'None',mode:0},
+  {id:'backrooms',name:'Backrooms',mode:1,paint:paintBackrooms},
+  {id:'pool',name:'Pool Rooms',mode:1,paint:paintPool},
+  {id:'hall',name:'Hallway',mode:1,paint:paintHall},
+  {id:'office',name:'Empty Office',mode:1,paint:paintOffice},
+  {id:'static',name:'TV Static',mode:2},
+  {id:'void',name:'Void Grid',mode:3},
+];
+let bgIdx=0, bgActive=false, segmenter=null, segLoading=false, segFailed=false;
+const bgState={soft:0.35, shift:0};
+const bgCache={};
+
+function buildBGs(){
+  const box=$('#bgs'); box.innerHTML='<span class="lbl">Scene</span>';
+  BGS.forEach((b,i)=>{ const el=document.createElement('button'); el.className='chip bg'+(i===bgIdx?' on':''); el.textContent=b.name;
+    el.onclick=()=>selectBG(i); box.appendChild(el); });
+  if(segLoading){ const w=document.createElement('span'); w.className='lbl'; w.textContent='loading…'; box.appendChild(w); }
+  if(segFailed){ const w=document.createElement('span'); w.className='lbl'; w.style.color='var(--rec)'; w.textContent='segmentation unavailable'; box.appendChild(w); }
+}
+async function selectBG(i){
+  bgIdx=i; buildBGs(); localStorage.setItem('fff-bg',BGS[i].id); buildSliders();
+  if(i===0){ bgActive=false; return; }
+  if(BGS[i].mode===1) uploadBG(BGS[i]);
+  if(!segmenter){ await loadSegmenter(); }
+  bgActive=!!segmenter;
+}
+function uploadBG(b){
+  if(!gl) return;
+  if(!bgCache[b.id]){ const c=document.createElement('canvas'); c.width=1280; c.height=720; b.paint(c.getContext('2d'),c.width,c.height); bgCache[b.id]=c; }
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D,texBG);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bgCache[b.id]);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+}
+async function loadSegmenter(){
+  if(segmenter||segLoading) return; segLoading=true; buildBGs();
+  try{
+    const vision=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm');
+    const files=await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    segmenter=await vision.ImageSegmenter.createFromOptions(files,{
+      baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite', delegate:'GPU'},
+      runningMode:'VIDEO', outputConfidenceMasks:true, outputCategoryMask:false });
+  }catch(e){ console.error('segmenter failed',e); segFailed=true; }
+  segLoading=false; buildBGs();
+}
+let maskBuf=null, lastSegT=-1;
+function updateMask(){
+  if(!bgActive||!segmenter||video.readyState<2) return;
+  const now=performance.now(); if(now===lastSegT) return; lastSegT=now;
+  let res; try{ res=segmenter.segmentForVideo(video, now); }catch(e){ return; }
+  const m=res.confidenceMasks && res.confidenceMasks[0]; if(!m) return;
+  const w=m.width, h=m.height, f=m.getAsFloat32Array();
+  if(!maskBuf||maskBuf.length!==w*h) maskBuf=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++) maskBuf[i]=f[i]*255;
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,texMask); gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.LUMINANCE,w,h,0,gl.LUMINANCE,gl.UNSIGNED_BYTE,maskBuf);
+  res.close && res.close();
+}
+
+// ---- scene painters (one-point perspective, drawn once) ----
+function persp(cx,w,h,horizon){ // helper: map (x in -1..1, y in -1..1, depth 0..1) to screen
+  return (x,y,d)=>{ const s=1-d*0.92; return [w/2 + x*w/2*s, horizon + y*h/2*s]; };
+}
+function paintBackrooms(cx,w,h){
+  const P=persp(cx,w,h,h*0.5);
+  const wall='#c9b34a', wallD='#a08c2e', carpet='#8a7a2c', carpetD='#6b5d1f', ceil='#d8cd93';
+  // back wall
+  const [bx0,by0]=P(-1,-1,1), [bx1,by1]=P(1,1,1);
+  cx.fillStyle=wall; cx.fillRect(0,0,w,h);
+  // ceiling
+  cx.fillStyle=ceil; cx.beginPath(); cx.moveTo(0,0); cx.lineTo(w,0); cx.lineTo(bx1,by0); cx.lineTo(bx0,by0); cx.fill();
+  // floor
+  cx.fillStyle=carpet; cx.beginPath(); cx.moveTo(0,h); cx.lineTo(w,h); cx.lineTo(bx1,by1); cx.lineTo(bx0,by1); cx.fill();
+  // carpet noise
+  for(let i=0;i<9000;i++){ const x=Math.random()*w, y=by1+Math.random()*(h-by1); cx.fillStyle=Math.random()<.5?carpetD:'#9c8b36'; cx.globalAlpha=.35; cx.fillRect(x,y,2,2); } cx.globalAlpha=1;
+  // side walls with wallpaper stripes
+  for(const side of [-1,1]){
+    cx.fillStyle=wallD; cx.beginPath(); const [x0,y0]=P(side,-1,0),[x1,y1]=P(side,1,0),[x2,y2]=P(side,1,1),[x3,y3]=P(side,-1,1);
+    cx.moveTo(x0,y0); cx.lineTo(x1,y1); cx.lineTo(x2,y2); cx.lineTo(x3,y3); cx.fill();
+    cx.strokeStyle='rgba(0,0,0,.12)'; cx.lineWidth=2;
+    for(let d=0;d<1;d+=0.06){ const [a,b]=P(side,-1,d),[c,e]=P(side,1,d); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); }
+    cx.strokeStyle='rgba(255,255,255,.08)';
+    for(let y=-1;y<1;y+=0.12){ const [a,b]=P(side,y,0),[c,e]=P(side,y,1); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); }
+  }
+  // back wall stripes + a doorway to nowhere
+  cx.strokeStyle='rgba(0,0,0,.08)'; for(let x=bx0;x<bx1;x+=6){ cx.beginPath(); cx.moveTo(x,by0); cx.lineTo(x,by1); cx.stroke(); }
+  cx.fillStyle='#6d5e1c'; cx.fillRect(bx0+(bx1-bx0)*0.62, by0+(by1-by0)*0.18, (bx1-bx0)*0.16, (by1-by0)*0.82);
+  cx.fillStyle='#3a3110'; cx.fillRect(bx0+(bx1-bx0)*0.64, by0+(by1-by0)*0.22, (bx1-bx0)*0.12, (by1-by0)*0.78);
+  // ceiling tiles + fluorescent panels
+  cx.strokeStyle='rgba(0,0,0,.18)'; cx.lineWidth=2;
+  for(let d=0;d<1;d+=0.07){ const [a,b]=P(-1,-1,d),[c,e]=P(1,-1,d); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); }
+  for(let x=-1;x<=1;x+=0.25){ const [a,b]=P(x,-1,0),[c,e]=P(x,-1,1); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); }
+  for(let d=0.04;d<0.9;d+=0.21){ for(const x of [-0.55,0.35]){
+    const [a,b]=P(x,-1,d),[c,e]=P(x+0.2,-1,d+0.1); cx.fillStyle='#fffbe0'; cx.shadowColor='#fff6c0'; cx.shadowBlur=30; cx.fillRect(a,b,c-a,e-b); cx.shadowBlur=0; } }
+  // haze/vignette
+  const g=cx.createRadialGradient(w/2,h/2,h*0.2,w/2,h/2,h*0.9); g.addColorStop(0,'rgba(255,240,180,0)'); g.addColorStop(1,'rgba(60,45,0,.55)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
+}
+function paintPool(cx,w,h){
+  const P=persp(cx,w,h,h*0.45);
+  cx.fillStyle='#eef4f6'; cx.fillRect(0,0,w,h);
+  const [bx0,by0]=P(-1,-1,1),[bx1,by1]=P(1,1,1);
+  // tiles helper
+  const tiles=(pts,step)=>{ cx.strokeStyle='rgba(120,160,175,.35)'; cx.lineWidth=2; pts(); };
+  for(const side of [-1,1]){ cx.fillStyle='#e3ecef'; cx.beginPath(); const [x0,y0]=P(side,-1,0),[x1,y1]=P(side,1,0),[x2,y2]=P(side,1,1),[x3,y3]=P(side,-1,1);
+    cx.moveTo(x0,y0); cx.lineTo(x1,y1); cx.lineTo(x2,y2); cx.lineTo(x3,y3); cx.fill();
+    cx.strokeStyle='rgba(120,160,175,.4)'; cx.lineWidth=2;
+    for(let d=0;d<1;d+=0.05){ const [a,b]=P(side,-1,d),[c,e]=P(side,1,d); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); }
+    for(let y=-1;y<1;y+=0.1){ const [a,b]=P(side,y,0),[c,e]=P(side,y,1); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); } }
+  cx.fillStyle='#f4f8f9'; cx.beginPath(); cx.moveTo(0,0); cx.lineTo(w,0); cx.lineTo(bx1,by0); cx.lineTo(bx0,by0); cx.fill();
+  cx.strokeStyle='rgba(120,160,175,.3)'; for(let x=bx0;x<bx1;x+=10){ cx.beginPath(); cx.moveTo(x,by0); cx.lineTo(x,by1); cx.stroke(); } for(let y=by0;y<by1;y+=10){ cx.beginPath(); cx.moveTo(bx0,y); cx.lineTo(bx1,y); cx.stroke(); }
+  // water
+  const wg=cx.createLinearGradient(0,by1,0,h); wg.addColorStop(0,'#9fe0ec'); wg.addColorStop(1,'#2aa9c9');
+  cx.fillStyle=wg; cx.beginPath(); cx.moveTo(0,h); cx.lineTo(w,h); cx.lineTo(bx1,by1); cx.lineTo(bx0,by1); cx.fill();
+  cx.strokeStyle='rgba(255,255,255,.55)'; cx.lineWidth=3;
+  for(let i=0;i<40;i++){ const y=by1+Math.random()*(h-by1); const x=Math.random()*w; cx.beginPath(); cx.moveTo(x,y); cx.bezierCurveTo(x+40,y-8,x+80,y+8,x+130,y); cx.stroke(); }
+  const g=cx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h); g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(1,'rgba(150,200,210,.5)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
+}
+function paintHall(cx,w,h){
+  const P=persp(cx,w,h,h*0.5);
+  cx.fillStyle='#1a1a1c'; cx.fillRect(0,0,w,h);
+  const [bx0,by0]=P(-0.5,-0.6,1),[bx1,by1]=P(0.5,0.6,1);
+  cx.fillStyle='#3a3a3d'; cx.beginPath(); cx.moveTo(0,h); cx.lineTo(w,h); cx.lineTo(bx1,by1); cx.lineTo(bx0,by1); cx.fill();
+  cx.fillStyle='#2b2b2e'; cx.beginPath(); cx.moveTo(0,0); cx.lineTo(w,0); cx.lineTo(bx1,by0); cx.lineTo(bx0,by0); cx.fill();
+  for(const side of [-1,1]){ cx.fillStyle=side<0?'#4a4a4e':'#424246'; cx.beginPath(); const [x0,y0]=P(side,-1,0),[x1,y1]=P(side,1,0),[x2,y2]=P(side*0.5,0.6,1),[x3,y3]=P(side*0.5,-0.6,1);
+    cx.moveTo(x0,y0); cx.lineTo(x1,y1); cx.lineTo(x2,y2); cx.lineTo(x3,y3); cx.fill();
+    // doors
+    for(let d=0.08;d<0.85;d+=0.2){ const wx=dd=>side*(1-0.5*dd); const [a,b]=P(wx(d),-0.3,d),[a2,b2]=P(wx(d+0.06),-0.3,d+0.06),[c,e]=P(wx(d+0.06),1,d+0.06),[a3,b3]=P(wx(d),1,d);
+      cx.fillStyle='#232326'; cx.beginPath(); cx.moveTo(a,b); cx.lineTo(a2,b2); cx.lineTo(c,e); cx.lineTo(a3,b3); cx.fill(); } }
+  // strip lights
+  for(let d=0;d<0.95;d+=0.12){ const [a,b]=P(-0.08,-1,d),[c,e]=P(0.08,-1,d+0.03); cx.fillStyle='#e8f6ff'; cx.shadowColor='#bfe6ff'; cx.shadowBlur=25; cx.fillRect(a,b,c-a,Math.max(3,e-b)); cx.shadowBlur=0; }
+  const g=cx.createRadialGradient(w/2,h/2,h*0.1,w/2,h/2,h*0.8); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(0,0,0,.75)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
+}
+function paintOffice(cx,w,h){
+  const P=persp(cx,w,h,h*0.48);
+  cx.fillStyle='#d9d5cc'; cx.fillRect(0,0,w,h);
+  const [bx0,by0]=P(-1,-1,1),[bx1,by1]=P(1,1,1);
+  cx.fillStyle='#8f8a80'; cx.beginPath(); cx.moveTo(0,h); cx.lineTo(w,h); cx.lineTo(bx1,by1); cx.lineTo(bx0,by1); cx.fill();
+  cx.fillStyle='#ecebe6'; cx.beginPath(); cx.moveTo(0,0); cx.lineTo(w,0); cx.lineTo(bx1,by0); cx.lineTo(bx0,by0); cx.fill();
+  cx.strokeStyle='rgba(0,0,0,.15)'; cx.lineWidth=2;
+  for(let d=0;d<1;d+=0.08){ const [a,b]=P(-1,-1,d),[c,e]=P(1,-1,d); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); const [a2,b2]=P(-1,1,d),[c2,e2]=P(1,1,d); cx.beginPath(); cx.moveTo(a2,b2); cx.lineTo(c2,e2); cx.stroke(); }
+  for(let x=-1;x<=1;x+=0.2){ const [a,b]=P(x,-1,0),[c,e]=P(x,-1,1); cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,e); cx.stroke(); const [a2,b2]=P(x,1,0),[c2,e2]=P(x,1,1); cx.beginPath(); cx.moveTo(a2,b2); cx.lineTo(c2,e2); cx.stroke(); }
+  for(const side of [-1,1]){ cx.fillStyle='#cfcbc1'; cx.beginPath(); const [x0,y0]=P(side,-1,0),[x1,y1]=P(side,1,0),[x2,y2]=P(side,1,1),[x3,y3]=P(side,-1,1); cx.moveTo(x0,y0); cx.lineTo(x1,y1); cx.lineTo(x2,y2); cx.lineTo(x3,y3); cx.fill(); }
+  // cubicle partitions
+  for(let d=0.15;d<0.9;d+=0.22){ for(const x of [-0.7,0.7]){ const [a,b]=P(x-0.25,0.05,d),[c,e]=P(x+0.25,1,d); cx.fillStyle='#8a97a6'; cx.fillRect(a,b,c-a,e-b); cx.fillStyle='#6f7c8a'; cx.fillRect(a,b,c-a,4); } }
+  for(let d=0.04;d<0.9;d+=0.16){ for(const x of [-0.5,0.3]){ const [a,b]=P(x,-1,d),[c,e]=P(x+0.2,-1,d+0.06); cx.fillStyle='#ffffff'; cx.shadowColor='#fff'; cx.shadowBlur=20; cx.fillRect(a,b,c-a,e-b); cx.shadowBlur=0; } }
+  const g=cx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(40,40,50,.5)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
+}
+buildBGs();
 
 // restore last preset
 const saved=PRESETS.find(p=>p.id===localStorage.getItem('fff-preset'));
