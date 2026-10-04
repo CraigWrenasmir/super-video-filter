@@ -54,9 +54,9 @@
   #bar button.on{border-color:var(--acc);color:var(--acc)}
   #presets{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
   #presets::-webkit-scrollbar{display:none}
-  #bgs{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
-  #bgs::-webkit-scrollbar{display:none}
-  #presets .lbl,#bgs .lbl{font-size:10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;padding-right:4px;white-space:nowrap}
+  #bgs,#faces{display:flex;gap:6px;padding:8px 10px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--line);flex:0 0 auto;align-items:center}
+  #bgs::-webkit-scrollbar,#faces::-webkit-scrollbar{display:none}
+  #presets .lbl,#bgs .lbl,#faces .lbl{font-size:10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;padding-right:4px;white-space:nowrap}
   .chip.bg{border-color:#3a3a3a}.chip.bg.on{background:#2df;border-color:#2df}
   .chip.wait{opacity:.5}
   .chip{font:inherit;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:999px;padding:8px 13px;cursor:pointer;white-space:nowrap}
@@ -76,7 +76,7 @@
   @media (min-width:900px) and (orientation:landscape){
     body{flex-direction:row}
     #ui{max-height:none;width:360px;border-top:0;border-left:1px solid var(--line)}
-    #presets,#bgs{flex-wrap:wrap}
+    #presets,#bgs,#faces{flex-wrap:wrap}
   }
 </style>
 </head>
@@ -107,6 +107,7 @@
   </div>
   <div id="presets"></div>
   <div id="bgs"></div>
+  <div id="faces"></div>
   <div id="sliders"></div>
 </div>
 
@@ -291,6 +292,9 @@ uniform sampler2D mask;  // person segmentation (1=person)
 uniform sampler2D bg;    // virtual background scene
 uniform float bgMode;    // 0 none, 1 image, 2 static, 3 void
 uniform float maskSoft, maskShift, bgScroll;
+uniform sampler2D faceSkin; // skin grown across the face (faceling)
+uniform sampler2D faceMask; // where to paint it (alpha)
+uniform float faceOn;
 uniform vec2 res; uniform float t; uniform float flipX;
 uniform float grain,vignette,contrast,brightness,saturation,blur,pixelate;
 uniform float tracking,bleed,scanlines,wobble,tapeNoise;
@@ -322,6 +326,8 @@ vec3 sampleCam(vec2 uv){
   uv = clamp(uv,0.001,0.999);
   if(flipX>0.5) uv.x = 1.-uv.x;
   vec3 c = texture2D(tex,uv).rgb;
+  if(faceOn>0.5){ float fm = texture2D(faceMask,uv).a;
+    c = mix(c, texture2D(faceSkin,uv).rgb + (hash(uv*res+fract(t)*31.)-.5)*0.03, fm); }
   if(bgMode>0.5){
     float m = texture2D(mask,uv).r;
     m = smoothstep(0.5-maskSoft*0.45+maskShift*0.3, 0.5+maskSoft*0.45+maskShift*0.3, m);
@@ -457,7 +463,7 @@ const $ = s=>document.querySelector(s);
 const video=$('#video'), canvas=$('#gl'), overlay=$('#overlay'), splash=$('#splash'), errEl=$('#err');
 const state = {}; for(const k in PARAMS) state[k]=PARAMS[k].def;
 let preset = PRESETS[0], facing='environment', flipX=false, stamp=localStorage.getItem('fff-stamp')||'';
-let gl, prog, fbA, fbB, texCam, texMask, texBG, uni={};
+let gl, prog, fbA, fbB, texCam, texMask, texBG, texFace, texFaceMask, uni={};
 let recorder=null, chunks=[], stream=null;
 
 // ---------- WebGL setup ----------
@@ -472,10 +478,12 @@ function initGL(){
   const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
   gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   const loc=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-  const names=['tex','prev','mask','bg','bgMode','maskSoft','maskShift','bgScroll','res','t','flipX',...Object.keys(PARAMS)];
+  const names=['tex','prev','mask','bg','faceSkin','faceMask','faceOn','bgMode','maskSoft','maskShift','bgScroll','res','t','flipX',...Object.keys(PARAMS)];
   names.forEach(n=>uni[n]=gl.getUniformLocation(prog,n));
   texCam=mkTex(); texMask=mkTex(); texBG=mkTex(); gl.uniform1i(uni.tex,0); gl.uniform1i(uni.prev,1); gl.uniform1i(uni.mask,2); gl.uniform1i(uni.bg,3);
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D,texMask); gl.texImage2D(gl.TEXTURE_2D,0,gl.LUMINANCE,1,1,0,gl.LUMINANCE,gl.UNSIGNED_BYTE,new Uint8Array([255]));
+  texFace=mkTex(); texFaceMask=mkTex(); gl.uniform1i(uni.faceSkin,4); gl.uniform1i(uni.faceMask,5);
+  [[gl.TEXTURE4,texFace],[gl.TEXTURE5,texFaceMask]].forEach(([u,tx])=>{ gl.activeTexture(u); gl.bindTexture(gl.TEXTURE_2D,tx); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4)); });
 }
 function mkTex(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
@@ -487,7 +495,7 @@ function sizeCanvas(){
   const vw=video.videoWidth||640, vh=video.videoHeight||480;
   const maxW=1280; const s=Math.min(1,maxW/vw);
   const w=Math.round(vw*s), h=Math.round(vh*s);
-  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; fbA=mkFB(w,h); fbB=mkFB(w,h); }
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; gl.activeTexture(gl.TEXTURE0); fbA=mkFB(w,h); fbB=mkFB(w,h); }
 }
 
 // ---------- render loop ----------
@@ -501,7 +509,8 @@ function frame(){
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,texCam);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,video);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,fbB.t);
-  updateMask();
+  updateMask(); updateFace();
+  gl.uniform1f(uni.faceOn, faceHit?1:0);
   gl.uniform1f(uni.bgMode, bgActive ? BGS[bgIdx].mode : 0); gl.uniform1f(uni.maskSoft,bgState.soft); gl.uniform1f(uni.maskShift,bgState.shift); gl.uniform1f(uni.bgScroll,1);
   gl.uniform2f(uni.res,canvas.width,canvas.height); gl.uniform1f(uni.t,t); gl.uniform1f(uni.flipX,flipX?1:0);
   for(const k in PARAMS) gl.uniform1f(uni[k],state[k]);
@@ -565,6 +574,7 @@ $('#start').onclick=async()=>{
     await startCamera();
     splash.style.display='none';
     const sb=BGS.findIndex(b=>b.id===localStorage.getItem('fff-bg')); if(sb>0) selectBG(sb);
+    const sf=FACES.findIndex(f=>f.id===localStorage.getItem('fff-face')); if(sf>0) selectFace(sf);
     requestAnimationFrame(frame);
   }catch(e){ errEl.textContent='Camera problem: '+(e.message||e.name); errEl.style.display='block'; console.error(e); }
 };
@@ -605,6 +615,9 @@ function buildSliders(){
   // extras: any other param someone might want, collapsed under "more"
   if(bgActive||bgIdx>0){ head('Scene cut-out');
     [['soft','Edge softness',0,1],['shift','Cut-out bias',-1,1]].forEach(([k,l,mn,mx])=>{ const row=document.createElement('div'); row.className='row'; row.innerHTML=`<label>${l}</label><input type="range" min="${mn}" max="${mx}" step="0.01" value="${bgState[k]}"><output>${fmt(bgState[k])}</output>`; const inp=row.querySelector('input'),out=row.querySelector('output'); inp.oninput=()=>{bgState[k]=+inp.value; out.textContent=fmt(bgState[k]);}; box.appendChild(row); }); }
+  if(faceIdx>0){ head('Faceling');
+    const row=document.createElement('div'); row.className='row'; row.innerHTML=`<label>Face cover</label><input type="range" min="0.6" max="0.92" step="0.01" value="${faceState.cover}"><output>${fmt(faceState.cover)}</output>`;
+    const inp=row.querySelector('input'),out=row.querySelector('output'); inp.oninput=()=>{faceState.cover=+inp.value; out.textContent=fmt(faceState.cover);}; box.appendChild(row); }
   head('More');
   Object.keys(PARAMS).filter(k=>!preset.sliders.includes(k)).forEach(add);
   const r=document.createElement('div'); r.className='row'; r.innerHTML=`<label>Label text</label><input type="text" placeholder="e.g. TAPE 03 / CAM 01" value="${stamp.replace(/"/g,'&quot;')}">`;
@@ -724,11 +737,19 @@ function uploadBG(b){
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,bgCache[b.id]);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
 }
+let visionP=null;
+function loadVision(){ // MediaPipe is shared by the scene cut-out and the faceling
+  if(!visionP) visionP=(async()=>{
+    const vision=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm');
+    const files=await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    return {vision,files}; })();
+  visionP.catch(()=>{ visionP=null; });
+  return visionP;
+}
 async function loadSegmenter(){
   if(segmenter||segLoading) return; segLoading=true; buildBGs();
   try{
-    const vision=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm');
-    const files=await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    const {vision,files}=await loadVision();
     segmenter=await vision.ImageSegmenter.createFromOptions(files,{
       baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite', delegate:'GPU'},
       runningMode:'VIDEO', outputConfidenceMasks:true, outputCategoryMask:false });
@@ -838,6 +859,74 @@ function paintOffice(cx,w,h){
   const g=cx.createRadialGradient(w/2,h/2,h*0.3,w/2,h/2,h); g.addColorStop(0,'rgba(0,0,0,0)'); g.addColorStop(1,'rgba(40,40,50,.5)'); cx.fillStyle=g; cx.fillRect(0,0,w,h);
 }
 buildBGs();
+
+// ============================================================
+//  FACELING (face tracking runs on-device)
+//  The eyes, nose and mouth are cut out and the hole is filled
+//  with skin grown inward from the edge of the face.
+// ============================================================
+const FACES=[{id:'none',name:'Normal'},{id:'faceling',name:'Faceling'}];
+const FACE_OVAL=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+let faceIdx=0, faceActive=false, faceLM=null, faceLoading=false, faceFailed=false, faceHit=false, lastFaceT=0;
+const faceState={cover:0.82};
+const fc={W:0,H:0,levels:[],out:null,mask:null};
+
+function buildFaces(){
+  const box=$('#faces'); box.innerHTML='<span class="lbl">Face</span>';
+  FACES.forEach((f,i)=>{ const el=document.createElement('button'); el.className='chip bg'+(i===faceIdx?' on':''); el.textContent=f.name;
+    el.onclick=()=>selectFace(i); box.appendChild(el); });
+  if(faceLoading){ const w=document.createElement('span'); w.className='lbl'; w.textContent='loading…'; box.appendChild(w); }
+  if(faceFailed){ const w=document.createElement('span'); w.className='lbl'; w.style.color='var(--rec)'; w.textContent='face tracking unavailable'; box.appendChild(w); }
+}
+async function selectFace(i){
+  faceIdx=i; buildFaces(); localStorage.setItem('fff-face',FACES[i].id); buildSliders();
+  if(i===0){ faceActive=false; return; }
+  if(!faceLM){ await loadFaceLM(); }
+  faceActive=!!faceLM && faceIdx>0;
+}
+async function loadFaceLM(){
+  if(faceLM||faceLoading) return; faceLoading=true; faceFailed=false; buildFaces();
+  try{
+    const {vision,files}=await loadVision();
+    const make=delegate=>vision.FaceLandmarker.createFromOptions(files,{
+      baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate},
+      runningMode:'VIDEO', numFaces:4 });
+    try{ faceLM=await make('GPU'); }catch(e){ faceLM=await make('CPU'); }
+  }catch(e){ console.error('face tracker failed',e); faceFailed=true; }
+  faceLoading=false; buildFaces();
+}
+function mkCanvas(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+function updateFace(){
+  faceHit=false;
+  if(!faceActive||!faceLM||video.readyState<2) return;
+  const now=Math.max(performance.now(), lastFaceT+1); lastFaceT=now;
+  let res; try{ res=faceLM.detectForVideo(video, now); }catch(e){ return; }
+  const found=res.faceLandmarks||[]; if(!found.length) return;
+  const W=320, H=Math.max(2,Math.round(W*video.videoHeight/video.videoWidth));
+  if(fc.W!==W||fc.H!==H){ fc.W=W; fc.H=H; fc.levels=[]; fc.out=mkCanvas(W,H); fc.mask=mkCanvas(W,H);
+    for(let w=W,h=H; w>=2&&h>=2; w=Math.ceil(w/2),h=Math.ceil(h/2)) fc.levels.push(mkCanvas(w,h)); }
+  const faces=found.map(lm=>{ let cx=0,cy=0; const pts=FACE_OVAL.map(i=>{ const x=lm[i].x*W, y=lm[i].y*H; cx+=x; cy+=y; return [x,y]; });
+    return {pts,cx:cx/pts.length,cy:cy/pts.length}; });
+  const oval=(c,f,s)=>{ c.beginPath(); f.pts.forEach(([x,y],i)=>{ const X=f.cx+(x-f.cx)*s, Y=f.cy+(y-f.cy)*s; i?c.lineTo(X,Y):c.moveTo(X,Y); }); c.closePath(); c.fill(); };
+  const cover=faceState.cover, rim=Math.min(1,cover+0.14);
+  // level 0: only the rim of skin around each face (cheeks, jaw, forehead), features cut away
+  const s=fc.levels[0].getContext('2d'); s.globalCompositeOperation='source-over'; s.clearRect(0,0,W,H); s.fillStyle='#fff';
+  faces.forEach(f=>oval(s,f,rim));
+  s.globalCompositeOperation='source-in'; s.drawImage(video,0,0,W,H);
+  s.globalCompositeOperation='destination-out'; faces.forEach(f=>oval(s,f,cover));
+  // pull: shrink again and again so the rim colours spread into the hole
+  for(let i=1;i<fc.levels.length;i++){ const c=fc.levels[i], x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height); x.drawImage(fc.levels[i-1],0,0,c.width,c.height); }
+  // push: stack them back up, coarse first, so the hole fills with smooth skin
+  const o=fc.out.getContext('2d'); o.clearRect(0,0,W,H);
+  for(let i=fc.levels.length-1;i>=0;i--) for(let k=0;k<4;k++) o.drawImage(fc.levels[i],0,0,W,H);
+  const m=fc.mask.getContext('2d'); m.clearRect(0,0,W,H); m.fillStyle='#fff'; faces.forEach(f=>oval(m,f,cover+0.05));
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D,texFace); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,fc.out);
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D,texFaceMask); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,fc.mask);
+  gl.activeTexture(gl.TEXTURE0);
+  faceHit=true;
+}
+buildFaces();
 
 // stop iOS double-tap / pinch zoom (touch-action alone isn't enough on older iPadOS)
 let lastTap=0;
