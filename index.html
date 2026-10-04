@@ -896,6 +896,9 @@ async function loadFaceLM(){
   faceLoading=false; buildFaces();
 }
 function mkCanvas(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+// spots that are bare skin on most faces (forehead, upper cheeks, nose) - used to work out the skin colour
+const SKIN_PTS=[151,9,107,336,66,296,50,280,101,330,117,346,205,425,5,195];
+const faceTone=[];
 function updateFace(){
   faceHit=false;
   if(!faceActive||!faceLM||video.readyState<2) return;
@@ -903,23 +906,45 @@ function updateFace(){
   let res; try{ res=faceLM.detectForVideo(video, now); }catch(e){ return; }
   const found=res.faceLandmarks||[]; if(!found.length) return;
   const W=320, H=Math.max(2,Math.round(W*video.videoHeight/video.videoWidth));
-  if(fc.W!==W||fc.H!==H){ fc.W=W; fc.H=H; fc.levels=[]; fc.out=mkCanvas(W,H); fc.mask=mkCanvas(W,H);
-    for(let w=W,h=H; w>=2&&h>=2; w=Math.ceil(w/2),h=Math.ceil(h/2)) fc.levels.push(mkCanvas(w,h)); }
-  const faces=found.map(lm=>{ let cx=0,cy=0; const pts=FACE_OVAL.map(i=>{ const x=lm[i].x*W, y=lm[i].y*H; cx+=x; cy+=y; return [x,y]; });
-    return {pts,cx:cx/pts.length,cy:cy/pts.length}; });
-  const oval=(c,f,s)=>{ c.beginPath(); f.pts.forEach(([x,y],i)=>{ const X=f.cx+(x-f.cx)*s, Y=f.cy+(y-f.cy)*s; i?c.lineTo(X,Y):c.moveTo(X,Y); }); c.closePath(); c.fill(); };
+  if(fc.W!==W||fc.H!==H){ fc.W=W; fc.H=H; fc.levels=[]; fc.out=mkCanvas(W,H); fc.soft=mkCanvas(Math.ceil(W/4),Math.ceil(H/4)); fc.mask=mkCanvas(Math.ceil(W/4),Math.ceil(H/4));
+    for(let w=W,h=H; w>=2&&h>=2; w=Math.ceil(w/2),h=Math.ceil(h/2)) fc.levels.push(mkCanvas(w,h));
+    fc.s=fc.levels[0].getContext('2d',{willReadFrequently:true}); }
+  const faces=found.map(lm=>{ let cx=0,cy=0,x0=W,y0=H,x1=0,y1=0; const pts=FACE_OVAL.map(i=>{ const x=lm[i].x*W, y=lm[i].y*H; cx+=x; cy+=y;
+      x0=Math.min(x0,x); y0=Math.min(y0,y); x1=Math.max(x1,x); y1=Math.max(y1,y); return [x,y]; });
+    x0=Math.max(0,Math.floor(x0)-1); y0=Math.max(0,Math.floor(y0)-1); x1=Math.min(W,Math.ceil(x1)+1); y1=Math.min(H,Math.ceil(y1)+1);
+    return {lm,pts,cx:cx/pts.length,cy:cy/pts.length,x0,y0,bw:x1-x0,bh:y1-y0}; }).filter(f=>f.bw>2&&f.bh>2);
+  if(!faces.length) return;
+  const trace=(c,f,k)=>{ f.pts.forEach(([x,y],i)=>{ const X=f.cx+(x-f.cx)*k, Y=f.cy+(y-f.cy)*k; i?c.lineTo(X,Y):c.moveTo(X,Y); }); c.closePath(); };
+  const ovals=(c,k)=>{ c.beginPath(); faces.forEach(f=>trace(c,f,k)); c.fill(); };
   const cover=faceState.cover, rim=Math.min(1,cover+0.14);
-  // level 0: only the rim of skin around each face (cheeks, jaw, forehead), features cut away
-  const s=fc.levels[0].getContext('2d'); s.globalCompositeOperation='source-over'; s.clearRect(0,0,W,H); s.fillStyle='#fff';
-  faces.forEach(f=>oval(s,f,rim));
-  s.globalCompositeOperation='source-in'; s.drawImage(video,0,0,W,H);
-  s.globalCompositeOperation='destination-out'; faces.forEach(f=>oval(s,f,cover));
-  // pull: shrink again and again so the rim colours spread into the hole
+  const s=fc.s; s.globalCompositeOperation='source-over'; s.clearRect(0,0,W,H); s.drawImage(video,0,0,W,H);
+  // 1. work out each face's skin colour from the bare-skin spots (median, so glasses / highlights / hair don't win)
+  faces.forEach((f,n)=>{ const d=s.getImageData(f.x0,f.y0,f.bw,f.bh).data; let c=[];
+    SKIN_PTS.forEach(i=>{ const x=Math.round(f.lm[i].x*W)-f.x0, y=Math.round(f.lm[i].y*H)-f.y0; if(x<0||y<0||x>=f.bw||y>=f.bh) return;
+      const o=(y*f.bw+x)*4; c.push([d[o],d[o+1],d[o+2]]); });
+    const skinny=c.filter(([r,g,b])=>r>50&&r>g&&g>=b*0.85); if(skinny.length>=3) c=skinny;
+    if(!c.length) c=[[200,160,140]];
+    c.sort((a,b)=>(a[0]+a[1]+a[2])-(b[0]+b[1]+b[2])); const m=c[c.length>>1];
+    const t=faceTone[n]; f.tone = faceTone[n] = t ? t.map((v,i)=>v+(m[i]-v)*0.15) : m; });
+  // 2. level 0: only the rim around each face, and only the pixels in it that are actually skin (no beard, hair, glasses, glare)
+  s.globalCompositeOperation='destination-in'; s.fillStyle='#fff'; ovals(s,rim);
+  s.globalCompositeOperation='destination-out'; ovals(s,cover);
+  s.globalCompositeOperation='source-over';
+  faces.forEach(f=>{ const img=s.getImageData(f.x0,f.y0,f.bw,f.bh), d=img.data; const [tr,tg,tb]=f.tone, ts=tr+tg+tb+1, tl=ts/3;
+    for(let o=0;o<d.length;o+=4){ if(!d[o+3]) continue; const r=d[o],g=d[o+1],b=d[o+2], sum=r+g+b+1, l=sum/3;
+      const dr=r/sum-tr/ts, dg=g/sum-tg/ts; if(dr*dr+dg*dg>0.0012 || l<tl*0.6 || l>tl*1.3) d[o+3]=0; }
+    s.putImageData(img,f.x0,f.y0); });
+  // 3. pull: shrink again and again so the skin colours spread into the hole
   for(let i=1;i<fc.levels.length;i++){ const c=fc.levels[i], x=c.getContext('2d'); x.clearRect(0,0,c.width,c.height); x.drawImage(fc.levels[i-1],0,0,c.width,c.height); }
-  // push: stack them back up, coarse first, so the hole fills with smooth skin
+  // 4. push: start from flat skin colour, then stack the levels back up (coarse first) for gentle, natural shading
   const o=fc.out.getContext('2d'); o.clearRect(0,0,W,H);
-  for(let i=fc.levels.length-1;i>=0;i--) for(let k=0;k<4;k++) o.drawImage(fc.levels[i],0,0,W,H);
-  const m=fc.mask.getContext('2d'); m.clearRect(0,0,W,H); m.fillStyle='#fff'; faces.forEach(f=>oval(m,f,cover+0.05));
+  faces.forEach(f=>{ o.fillStyle=`rgb(${f.tone.map(Math.round).join(',')})`; o.beginPath(); trace(o,f,1.15); o.fill(); });
+  for(let i=fc.levels.length-1;i>=1;i--) for(let k=0;k<2;k++) o.drawImage(fc.levels[i],0,0,W,H);
+  // 5. soften, so no blocks or seams are left
+  const b=fc.soft.getContext('2d'); b.clearRect(0,0,fc.soft.width,fc.soft.height); b.drawImage(fc.out,0,0,fc.soft.width,fc.soft.height);
+  o.clearRect(0,0,W,H); o.drawImage(fc.soft,0,0,W,H);
+  const m=fc.mask.getContext('2d'); m.setTransform(1,0,0,1,0,0); m.clearRect(0,0,fc.mask.width,fc.mask.height);
+  m.setTransform(fc.mask.width/W,0,0,fc.mask.height/H,0,0); m.fillStyle='#fff'; ovals(m,cover+0.06);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
   gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D,texFace); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,fc.out);
   gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D,texFaceMask); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,fc.mask);
